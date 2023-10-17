@@ -1,17 +1,18 @@
 <script>
   import { Icon, notifications } from "@budibase/bbui"
-  import { automationStore } from "builderStore"
+  import { automationStore, selectedAutomation } from "builderStore"
   import WebhookDisplay from "./WebhookDisplay.svelte"
   import { ModalContent } from "@budibase/bbui"
   import { onMount, onDestroy } from "svelte"
 
   const POLL_RATE_MS = 2500
+
   let interval
   let finished = false
   let schemaURL
   let propCount = 0
 
-  $: automation = $automationStore.selectedAutomation?.automation
+  $: automation = $selectedAutomation
 
   onMount(async () => {
     if (!automation?.definition?.trigger?.inputs.schemaUrl) {
@@ -69,7 +70,7 @@
   <a
     slot="footer"
     target="_blank"
-    href="https://docs.budibase.com/automate/steps/triggers"
+    href="https://docs.budibase.com/docs/trigger"
   >
     <Icon name="InfoOutline" />
     <span>Learn about webhooks</span>

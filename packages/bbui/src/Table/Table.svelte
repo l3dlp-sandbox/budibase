@@ -21,6 +21,8 @@
    * template: a HBS or JS binding to use as the value
    * background: the background color
    * color: the text color
+   * borderLeft: show a left border
+   * borderRight: show a right border
    */
   export let data = []
   export let schema = {}
@@ -28,14 +30,18 @@
   export let rowCount = 0
   export let quiet = false
   export let loading = false
-  export let allowSelectRows = true
+  export let allowSelectRows
   export let allowEditRows = true
   export let allowEditColumns = true
+  export let allowClickRows = true
   export let selectedRows = []
   export let customRenderers = []
   export let disableSorting = false
   export let autoSortColumns = true
   export let compact = false
+  export let customPlaceholder = false
+  export let showHeaderBorder = true
+  export let placeholderText = "No rows found"
 
   const dispatch = createEventDispatcher()
 
@@ -56,6 +62,7 @@
   $: if (!loading) loaded = true
   $: fields = getFields(schema, showAutoColumns, autoSortColumns)
   $: rows = fields?.length ? data || [] : []
+  $: totalRowCount = rows?.length || 0
   $: visibleRowCount = getVisibleRowCount(
     loaded,
     height,
@@ -63,7 +70,13 @@
     rowCount,
     rowHeight
   )
-  $: contentStyle = getContentStyle(visibleRowCount, rowCount, rowHeight)
+  $: heightStyle = getHeightStyle(
+    visibleRowCount,
+    rowCount,
+    totalRowCount,
+    rowHeight,
+    loading
+  )
   $: sortedRows = sortRows(rows, sortColumn, sortOrder)
   $: gridStyle = getGridStyle(fields, schema, showEditColumn)
   $: showEditColumn = allowEditRows || allowSelectRows
@@ -107,11 +120,20 @@
     return Math.min(allRows, Math.ceil(height / rowHeight))
   }
 
-  const getContentStyle = (visibleRows, rowCount, rowHeight) => {
-    if (!rowCount || !visibleRows) {
+  const getHeightStyle = (
+    visibleRowCount,
+    rowCount,
+    totalRowCount,
+    rowHeight,
+    loading
+  ) => {
+    if (loading) {
+      return `height: ${headerHeight + visibleRowCount * rowHeight}px;`
+    }
+    if (!rowCount || !visibleRowCount || totalRowCount <= rowCount) {
       return ""
     }
-    return `height: ${headerHeight + visibleRows * rowHeight}px;`
+    return `height: ${headerHeight + visibleRowCount * rowHeight}px;`
   }
 
   const getGridStyle = (fields, schema, showEditColumn) => {
@@ -121,7 +143,7 @@
     }
     fields?.forEach(field => {
       const fieldSchema = schema[field]
-      if (fieldSchema.width) {
+      if (fieldSchema.width && typeof fieldSchema.width === "string") {
         style += ` ${fieldSchema.width}`
       } else {
         style += " minmax(auto, 1fr)"
@@ -182,12 +204,18 @@
     })
     return columns
       .sort((a, b) => {
+        if (a.divider) {
+          return a
+        }
+        if (b.divider) {
+          return b
+        }
         const orderA = a.order || Number.MAX_SAFE_INTEGER
         const orderB = b.order || Number.MAX_SAFE_INTEGER
         const nameA = getDisplayName(a)
         const nameB = getDisplayName(b)
         if (orderA !== orderB) {
-          return orderA < orderB ? orderA : orderB
+          return orderA < orderB ? a : b
         }
         return nameA < nameB ? a : b
       })
@@ -251,152 +279,188 @@
       if (schema[field].align === "Right") {
         styles[field] += "justify-content: flex-end; text-align: right;"
       }
+      if (schema[field].borderLeft) {
+        styles[field] +=
+          "border-left: 1px solid var(--spectrum-global-color-gray-200);"
+      }
+      if (schema[field].borderLeft) {
+        styles[field] +=
+          "border-right: 1px solid var(--spectrum-global-color-gray-200);"
+      }
+      if (schema[field].minWidth) {
+        styles[field] += `min-width: ${schema[field].minWidth};`
+      }
     })
     return styles
   }
 </script>
 
-<div
-  class="wrapper"
-  class:wrapper--quiet={quiet}
-  class:wrapper--compact={compact}
-  bind:offsetHeight={height}
-  style={`--row-height: ${rowHeight}px; --header-height: ${headerHeight}px;`}
->
-  {#if !loaded}
-    <div class="loading" style={contentStyle}>
-      <ProgressCircle />
-    </div>
-  {:else}
-    <div class="spectrum-Table" style={`${contentStyle}${gridStyle}`}>
-      {#if fields.length}
-        <div class="spectrum-Table-head">
-          {#if showEditColumn}
-            <div
-              class="spectrum-Table-headCell spectrum-Table-headCell--divider spectrum-Table-headCell--edit"
-            >
-              {#if allowSelectRows}
-                <Checkbox
-                  bind:value={checkboxStatus}
-                  on:change={toggleSelectAll}
-                />
-              {:else}
-                Edit
-              {/if}
-            </div>
-          {/if}
-          {#each fields as field}
-            <div
-              class="spectrum-Table-headCell"
-              class:spectrum-Table-headCell--alignCenter={schema[field]
-                .align === "Center"}
-              class:spectrum-Table-headCell--alignRight={schema[field].align ===
-                "Right"}
-              class:is-sortable={schema[field].sortable !== false}
-              class:is-sorted-desc={sortColumn === field &&
-                sortOrder === "Descending"}
-              class:is-sorted-asc={sortColumn === field &&
-                sortOrder === "Ascending"}
-              on:click={() => sortBy(schema[field])}
-            >
-              <div class="title">{getDisplayName(schema[field])}</div>
-              {#if schema[field]?.autocolumn}
-                <svg
-                  class="spectrum-Icon spectrum-Table-autoIcon"
-                  focusable="false"
-                >
-                  <use xlink:href="#spectrum-icon-18-MagicWand" />
-                </svg>
-              {/if}
-              {#if sortColumn === field}
-                <svg
-                  class="spectrum-Icon spectrum-UIIcon-ArrowDown100 spectrum-Table-sortedIcon"
-                  focusable="false"
-                  aria-hidden="true"
-                >
-                  <use xlink:href="#spectrum-css-icon-Arrow100" />
-                </svg>
-              {/if}
-              {#if allowEditColumns && schema[field]?.editable !== false}
-                <svg
-                  class="spectrum-Icon spectrum-Table-editIcon"
-                  focusable="false"
-                  on:click={e => editColumn(e, field)}
-                >
-                  <use xlink:href="#spectrum-icon-18-Edit" />
-                </svg>
-              {/if}
-            </div>
-          {/each}
-        </div>
-      {/if}
-      {#if sortedRows?.length}
-        {#each sortedRows as row, idx}
-          <div
-            class="spectrum-Table-row"
-            on:click={() => dispatch("click", row)}
-            on:click={() => toggleSelectRow(row)}
-          >
+{#key fields?.length}
+  <div
+    class="wrapper"
+    class:wrapper--quiet={quiet}
+    class:wrapper--compact={compact}
+    bind:offsetHeight={height}
+    style={`--row-height: ${rowHeight}px; --header-height: ${headerHeight}px;`}
+  >
+    {#if loading}
+      <div class="loading" style={heightStyle}>
+        <slot name="loadingIndicator">
+          <ProgressCircle />
+        </slot>
+      </div>
+    {:else}
+      <div
+        class="spectrum-Table"
+        class:no-scroll={!rowCount}
+        style={`${heightStyle}${gridStyle}`}
+      >
+        {#if fields.length}
+          <div class="spectrum-Table-head">
             {#if showEditColumn}
               <div
-                class="spectrum-Table-cell spectrum-Table-cell--divider spectrum-Table-cell--edit"
-                on:click={e => {
-                  toggleSelectRow(row)
-                  e.stopPropagation()
-                }}
+                class:noBorderHeader={!showHeaderBorder}
+                class="spectrum-Table-headCell spectrum-Table-headCell--divider spectrum-Table-headCell--edit"
               >
-                <SelectEditRenderer
-                  data={row}
-                  selected={selectedRows.findIndex(
-                    selectedRow => selectedRow._id === row._id
-                  ) !== -1}
-                  onEdit={e => editRow(e, row)}
-                  {allowSelectRows}
-                  {allowEditRows}
-                />
+                {#if allowSelectRows}
+                  <Checkbox
+                    bind:value={checkboxStatus}
+                    on:change={toggleSelectAll}
+                  />
+                {:else}
+                  Edit
+                {/if}
               </div>
             {/if}
             {#each fields as field}
               <div
-                class="spectrum-Table-cell"
-                class:spectrum-Table-cell--divider={!!schema[field].divider}
-                style={cellStyles[field]}
+                class="spectrum-Table-headCell"
+                class:noBorderHeader={!showHeaderBorder}
+                class:spectrum-Table-headCell--alignCenter={schema[field]
+                  .align === "Center"}
+                class:spectrum-Table-headCell--alignRight={schema[field]
+                  .align === "Right"}
+                class:is-sortable={schema[field].sortable !== false}
+                class:is-sorted-desc={sortColumn === field &&
+                  sortOrder === "Descending"}
+                class:is-sorted-asc={sortColumn === field &&
+                  sortOrder === "Ascending"}
+                on:click={() => sortBy(schema[field])}
               >
-                <CellRenderer
-                  {customRenderers}
-                  {row}
-                  schema={schema[field]}
-                  value={deepGet(row, field)}
-                  on:clickrelationship
-                >
-                  <slot />
-                </CellRenderer>
+                <div class="title">{getDisplayName(schema[field])}</div>
+                {#if schema[field]?.autocolumn}
+                  <svg
+                    class="spectrum-Icon spectrum-Table-autoIcon"
+                    focusable="false"
+                  >
+                    <use xlink:href="#spectrum-icon-18-MagicWand" />
+                  </svg>
+                {/if}
+                {#if sortColumn === field}
+                  <svg
+                    class="spectrum-Icon spectrum-UIIcon-ArrowDown100 spectrum-Table-sortedIcon"
+                    focusable="false"
+                    aria-hidden="true"
+                  >
+                    <use xlink:href="#spectrum-css-icon-Arrow100" />
+                  </svg>
+                {/if}
+                {#if allowEditColumns && schema[field]?.editable !== false}
+                  <svg
+                    class="spectrum-Icon spectrum-Table-editIcon"
+                    focusable="false"
+                    on:click={e => editColumn(e, field)}
+                  >
+                    <use xlink:href="#spectrum-icon-18-Edit" />
+                  </svg>
+                {/if}
               </div>
             {/each}
           </div>
-        {/each}
-      {:else}
-        <div class="placeholder" class:placeholder--no-fields={!fields?.length}>
-          <div class="placeholder-content">
-            <svg class="spectrum-Icon spectrum-Icon--sizeXXL" focusable="false">
-              <use xlink:href="#spectrum-icon-18-Table" />
-            </svg>
-            <div>No rows found</div>
+        {/if}
+        {#if sortedRows?.length}
+          {#each sortedRows as row}
+            <div class="spectrum-Table-row" class:clickable={allowClickRows}>
+              {#if showEditColumn}
+                <div
+                  class:noBorderCheckbox={!showHeaderBorder}
+                  class="spectrum-Table-cell spectrum-Table-cell--divider spectrum-Table-cell--edit"
+                  on:click={e => {
+                    toggleSelectRow(row)
+                    e.stopPropagation()
+                  }}
+                >
+                  <SelectEditRenderer
+                    data={row}
+                    selected={selectedRows.findIndex(
+                      selectedRow => selectedRow._id === row._id
+                    ) !== -1}
+                    onEdit={e => editRow(e, row)}
+                    {allowSelectRows}
+                    {allowEditRows}
+                  />
+                </div>
+              {/if}
+              {#each fields as field}
+                <div
+                  class="spectrum-Table-cell"
+                  class:spectrum-Table-cell--divider={!!schema[field].divider}
+                  style={cellStyles[field]}
+                  on:click={() => {
+                    if (!schema[field]?.preventSelectRow) {
+                      dispatch("click", row)
+                      toggleSelectRow(row)
+                    }
+                  }}
+                >
+                  <CellRenderer
+                    {customRenderers}
+                    {row}
+                    schema={schema[field]}
+                    value={deepGet(row, field)}
+                    on:clickrelationship
+                    on:buttonclick
+                  >
+                    <slot />
+                  </CellRenderer>
+                </div>
+              {/each}
+            </div>
+          {/each}
+        {:else}
+          <div
+            class="placeholder"
+            class:placeholder--custom={customPlaceholder}
+            class:placeholder--no-fields={!fields?.length}
+          >
+            {#if customPlaceholder}
+              <slot name="placeholder" />
+            {:else}
+              <div class="placeholder-content">
+                <svg
+                  class="spectrum-Icon spectrum-Icon--sizeXXL"
+                  focusable="false"
+                >
+                  <use xlink:href="#spectrum-icon-18-Table" />
+                </svg>
+                <div>{placeholderText}</div>
+              </div>
+            {/if}
           </div>
-        </div>
-      {/if}
-    </div>
-  {/if}
-</div>
+        {/if}
+      </div>
+    {/if}
+  </div>
+{/key}
 
 <style>
   /* Wrapper */
   .wrapper {
     position: relative;
-    z-index: 0;
     --table-bg: var(--spectrum-global-color-gray-50);
     --table-border: 1px solid var(--spectrum-alias-border-color-mid);
     --cell-padding: var(--spectrum-global-dimension-size-250);
+    overflow: auto;
   }
   .wrapper--quiet {
     --table-bg: var(--spectrum-alias-background-color-transparent);
@@ -407,9 +471,10 @@
 
   /* Loading */
   .loading {
-    display: grid;
-    place-items: center;
+    display: flex;
+    align-items: center;
     min-height: 100px;
+    justify-content: center;
   }
 
   /* Table */
@@ -418,6 +483,9 @@
     border-radius: 0;
     display: grid;
     overflow: auto;
+  }
+  .spectrum-Table.no-scroll {
+    overflow: visible;
   }
 
   /* Header */
@@ -447,18 +515,31 @@
     justify-content: flex-start;
     align-items: center;
     user-select: none;
+    border-top: var(--table-border);
   }
+  .spectrum-Table-headCell:first-of-type {
+    border-left: var(--table-border);
+  }
+  .spectrum-Table-headCell:last-of-type {
+    border-right: var(--table-border);
+  }
+
+  .noBorderHeader {
+    border-top: none !important;
+    border-right: none !important;
+    border-left: none !important;
+  }
+
+  .noBorderCheckbox {
+    border-top: none !important;
+    border-right: none !important;
+  }
+
   .spectrum-Table-headCell--alignCenter {
     justify-content: center;
   }
   .spectrum-Table-headCell--alignRight {
     justify-content: flex-end;
-  }
-  .spectrum-Table-headCell--divider {
-    padding-right: var(--cell-padding);
-  }
-  .spectrum-Table-headCell--divider + .spectrum-Table-headCell {
-    padding-left: var(--cell-padding);
   }
   .spectrum-Table-headCell--edit {
     position: sticky;
@@ -466,7 +547,7 @@
     z-index: 3;
   }
   .spectrum-Table-headCell .title {
-    overflow: hidden;
+    overflow: visible;
     text-overflow: ellipsis;
   }
   .spectrum-Table-headCell:hover .spectrum-Table-editIcon {
@@ -492,12 +573,13 @@
   /* Table rows */
   .spectrum-Table-row {
     display: contents;
+    cursor: auto;
   }
-  .spectrum-Table-row:hover .spectrum-Table-cell {
-    /*background-color: var(--hover-bg) !important;*/
+  .spectrum-Table-row.clickable {
+    cursor: pointer;
   }
-  .spectrum-Table-row:hover .spectrum-Table-cell:after {
-    background-color: var(--spectrum-alias-highlight-hover);
+  .spectrum-Table-row.clickable:hover .spectrum-Table-cell {
+    background-color: var(--spectrum-global-color-gray-100);
   }
   .wrapper--quiet .spectrum-Table-row {
     border-left: none;
@@ -529,30 +611,13 @@
     gap: 4px;
     border-bottom: 1px solid var(--spectrum-alias-border-color-mid);
     background-color: var(--table-bg);
-    z-index: 1;
-  }
-  .spectrum-Table-cell--divider {
-    padding-right: var(--cell-padding);
-  }
-  .spectrum-Table-cell--divider + .spectrum-Table-cell {
-    padding-left: var(--cell-padding);
+    z-index: auto;
+    transition: background-color 130ms ease-out;
   }
   .spectrum-Table-cell--edit {
     position: sticky;
     left: 0;
     z-index: 2;
-  }
-  .spectrum-Table-cell:after {
-    content: "";
-    position: absolute;
-    width: 100%;
-    height: 100%;
-    background-color: transparent;
-    top: 0;
-    left: 0;
-    pointer-events: none;
-    transition: background-color
-      var(--spectrum-global-animation-duration-100, 0.13s) ease-in-out;
   }
 
   /* Placeholder  */
@@ -565,16 +630,19 @@
     border-top: none;
     grid-column: 1 / -1;
     background-color: var(--table-bg);
+    padding: 40px;
   }
   .placeholder--no-fields {
     border-top: var(--table-border);
+  }
+  .placeholder--custom {
+    justify-content: flex-start;
   }
   .wrapper--quiet .placeholder {
     border-left: none;
     border-right: none;
   }
   .placeholder-content {
-    padding: 40px;
     display: flex;
     flex-direction: column;
     justify-content: center;

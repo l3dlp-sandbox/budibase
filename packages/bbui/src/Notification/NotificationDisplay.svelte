@@ -8,13 +8,16 @@
 
 <Portal target=".modal-container">
   <div class="notifications">
-    {#each $notifications as { type, icon, message, id, dismissable } (id)}
-      <div transition:fly={{ y: -30 }}>
+    {#each $notifications as { type, icon, message, id, dismissable, action, actionMessage, wide } (id)}
+      <div transition:fly={{ y: 30 }}>
         <Notification
           {type}
           {icon}
           {message}
           {dismissable}
+          {action}
+          {actionMessage}
+          {wide}
           on:dismiss={() => notifications.dismiss(id)}
         />
       </div>
@@ -25,7 +28,7 @@
 <style>
   .notifications {
     position: fixed;
-    top: 20px;
+    bottom: 40px;
     left: 0;
     right: 0;
     margin: 0 auto;

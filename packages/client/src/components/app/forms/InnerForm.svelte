@@ -10,17 +10,22 @@
   export let size
   export let schema
   export let table
+  export let disableValidation = false
+  export let editAutoColumns = false
+
+  // We export this store so that when we remount the inner form we can still
+  // persist what step we're on
+  export let currentStep
 
   const component = getContext("component")
   const { styleable, Provider, ActionTypes } = getContext("sdk")
 
   let fields = []
-  const currentStep = writable(1)
   const formState = writable({
     values: {},
     errors: {},
     valid: true,
-    currentStep: 1,
+    currentStep: get(currentStep),
   })
 
   // Reactive derived stores to derive form state from field array
@@ -126,6 +131,17 @@
     return fields.find(field => get(field).name === name)
   }
 
+  // Sanitises a value by ensuring it doesn't contain any invalid data
+  const sanitiseValue = (value, schema, type) => {
+    // Check arrays - remove any values not present in the field schema and
+    // convert any values supplied to strings
+    if (Array.isArray(value) && type === "array" && schema) {
+      const options = schema?.constraints?.inclusion || []
+      return value.map(opt => String(opt)).filter(opt => options.includes(opt))
+    }
+    return value
+  }
+
   const formApi = {
     registerField: (
       field,
@@ -141,12 +157,17 @@
 
       // Create validation function based on field schema
       const schemaConstraints = schema?.[field]?.constraints
-      const validator = createValidatorFromConstraints(
-        schemaConstraints,
-        validationRules,
-        field,
-        table
-      )
+      const validator = disableValidation
+        ? null
+        : createValidatorFromConstraints(
+            schemaConstraints,
+            validationRules,
+            field,
+            table
+          )
+
+      // Sanitise the default value to ensure it doesn't contain invalid data
+      defaultValue = sanitiseValue(defaultValue, schema?.[field], type)
 
       // If we've already registered this field then keep some existing state
       let initialValue = Helpers.deepGet(initialValues, field) ?? defaultValue
@@ -157,18 +178,16 @@
         const { fieldState } = get(existingField)
         fieldId = fieldState.fieldId
 
-        // Use new default value if default value changed,
-        // otherwise use the current value if possible
-        if (defaultValue !== fieldState.defaultValue) {
-          initialValue = defaultValue
-        } else {
-          initialValue = fieldState.value ?? initialValue
+        // Determine the initial value for this field, reusing the current
+        // value if one exists
+        if (fieldState.value != null && fieldState.value !== "") {
+          initialValue = fieldState.value
         }
 
         // If this field has already been registered and we previously had an
         // error set, then re-run the validator to see if we can unset it
         if (fieldState.error) {
-          initialError = validator(initialValue)
+          initialError = validator?.(initialValue)
         }
       }
 
@@ -184,12 +203,13 @@
           fieldId,
           value: initialValue,
           error: initialError,
-          disabled: disabled || fieldDisabled || isAutoColumn,
+          disabled:
+            disabled || fieldDisabled || (isAutoColumn && !editAutoColumns),
           defaultValue,
           validator,
           lastUpdate: Date.now(),
         },
-        fieldApi: makeFieldApi(field, defaultValue),
+        fieldApi: makeFieldApi(field),
         fieldSchema: schema?.[field] ?? {},
       })
 
@@ -203,27 +223,29 @@
 
       return fieldInfo
     },
-    validate: (onlyCurrentStep = false) => {
+    validate: () => {
+      const stepFields = fields.filter(
+        field => get(field).step === get(currentStep)
+      )
+      // We want to validate every field (even if validation fails early) to
+      // ensure that all fields are populated with errors if invalid
       let valid = true
-      let validationFields = fields
-
-      // Reduce fields to only the current step if required
-      if (onlyCurrentStep) {
-        validationFields = fields.filter(f => get(f).step === get(currentStep))
-      }
-
-      // Validate fields and check if any are invalid
-      validationFields.forEach(field => {
-        if (!get(field).fieldApi.validate()) {
-          valid = false
+      let hasScrolled = false
+      stepFields.forEach(field => {
+        const fieldValid = get(field).fieldApi.validate()
+        valid = valid && fieldValid
+        if (!valid && !hasScrolled) {
+          handleScrollToField({ field: get(field) })
+          hasScrolled = true
         }
       })
+
       return valid
     },
-    clear: () => {
-      // Clear the form by clearing each individual field
+    reset: () => {
+      // Reset the form by resetting each individual field
       fields.forEach(field => {
-        get(field).fieldApi.clearValue()
+        get(field).fieldApi.reset()
       })
     },
     changeStep: ({ type, number }) => {
@@ -234,13 +256,29 @@
       } else if (type === "first") {
         currentStep.set(1)
       } else if (type === "specific" && number && !isNaN(number)) {
-        currentStep.set(number)
+        currentStep.set(parseInt(number))
       }
     },
     setStep: step => {
       if (step) {
         currentStep.set(step)
       }
+    },
+    setFieldValue: (fieldName, value) => {
+      const field = getField(fieldName)
+      if (!field) {
+        return
+      }
+      const { fieldApi } = get(field)
+      fieldApi.setValue(value)
+    },
+    resetField: fieldName => {
+      const field = getField(fieldName)
+      if (!field) {
+        return
+      }
+      const { fieldApi } = get(field)
+      fieldApi.reset()
     },
   }
 
@@ -254,11 +292,11 @@
 
       // Skip if the value is the same
       if (!skipCheck && fieldState.value === value) {
-        return
+        return false
       }
 
       // Update field state
-      const error = validator ? validator(value) : null
+      const error = validator?.(value)
       fieldInfo.update(state => {
         state.fieldState.value = value
         state.fieldState.error = error
@@ -266,14 +304,14 @@
         return state
       })
 
-      return !error
+      return true
     }
 
-    // Clears the value of a certain field back to the initial value
-    const clearValue = () => {
+    // Clears the value of a certain field back to the default value
+    const reset = () => {
       const fieldInfo = getField(field)
       const { fieldState } = get(fieldInfo)
-      const newValue = initialValues[field] ?? fieldState.defaultValue
+      const newValue = fieldState.defaultValue
 
       // Update field state
       fieldInfo.update(state => {
@@ -292,12 +330,14 @@
 
       // Create new validator
       const schemaConstraints = schema?.[field]?.constraints
-      const validator = createValidatorFromConstraints(
-        schemaConstraints,
-        validationRules,
-        field,
-        table
-      )
+      const validator = disableValidation
+        ? null
+        : createValidatorFromConstraints(
+            schemaConstraints,
+            validationRules,
+            field,
+            table
+          )
 
       // Update validator
       fieldInfo.update(state => {
@@ -310,6 +350,17 @@
       if (error) {
         setValue(value, true)
       }
+    }
+
+    // We don't want to actually remove the field state when deregistering, just
+    // remove any errors and validation
+    const deregister = () => {
+      const fieldInfo = getField(field)
+      fieldInfo.update(state => {
+        state.fieldState.validator = null
+        state.fieldState.error = null
+        return state
+      })
     }
 
     // Updates the disabled state of a certain field
@@ -328,13 +379,15 @@
 
     return {
       setValue,
-      clearValue,
+      reset,
       updateValidation,
       setDisabled,
+      deregister,
       validate: () => {
         // Validate the field by force setting the same value again
-        const { fieldState } = get(getField(field))
-        return setValue(fieldState.value, true)
+        const fieldInfo = getField(field)
+        setValue(get(fieldInfo).fieldState.value, true)
+        return !get(fieldInfo).fieldState.error
       },
     }
   }
@@ -344,7 +397,7 @@
     formState,
     formApi,
 
-    // Data source is needed by attachment fields to be able to upload files
+    // Datasource is needed by attachment fields to be able to upload files
     // to the correct table ID
     dataSource,
   })
@@ -353,11 +406,33 @@
   // register their fields to step 1
   setContext("form-step", writable(1))
 
+  const handleUpdateFieldValue = ({ type, field, value }) => {
+    if (type === "set") {
+      formApi.setFieldValue(field, value)
+    } else {
+      formApi.resetField(field)
+    }
+  }
+
+  const handleScrollToField = ({ field }) => {
+    if (!field.fieldState) {
+      field = get(getField(field))
+    }
+    const fieldId = field.fieldState.fieldId
+    const fieldElement = document.getElementById(fieldId)
+    fieldElement.focus({ preventScroll: true })
+    const label = document.querySelector(`label[for="${fieldId}"]`)
+    label.style.scrollMargin = "100px"
+    label.scrollIntoView({ behavior: "smooth", block: "nearest" })
+  }
+
   // Action context to pass to children
   const actions = [
     { type: ActionTypes.ValidateForm, callback: formApi.validate },
-    { type: ActionTypes.ClearForm, callback: formApi.clear },
+    { type: ActionTypes.ClearForm, callback: formApi.reset },
     { type: ActionTypes.ChangeFormStep, callback: formApi.changeStep },
+    { type: ActionTypes.UpdateFieldValue, callback: handleUpdateFieldValue },
+    { type: ActionTypes.ScrollTo, callback: handleScrollToField },
   ]
 </script>
 

@@ -5,7 +5,6 @@
     Divider,
     ActionMenu,
     MenuItem,
-    Avatar,
     Page,
     Icon,
     Body,
@@ -13,37 +12,50 @@
     notifications,
   } from "@budibase/bbui"
   import { onMount } from "svelte"
-  import { apps, organisation, auth } from "stores/portal"
+  import { apps, organisation, auth, groups, licensing } from "stores/portal"
   import { goto } from "@roxi/routify"
   import { AppStatus } from "constants"
   import { gradient } from "actions"
-  import UpdateUserInfoModal from "components/settings/UpdateUserInfoModal.svelte"
+  import ProfileModal from "components/settings/ProfileModal.svelte"
   import ChangePasswordModal from "components/settings/ChangePasswordModal.svelte"
   import { processStringSync } from "@budibase/string-templates"
+  import Spaceman from "assets/bb-space-man.svg"
   import Logo from "assets/bb-emblem.svg"
+  import { UserAvatar } from "@budibase/frontend-core"
+  import { helpers, sdk } from "@budibase/shared-core"
 
   let loaded = false
   let userInfoModal
   let changePasswordModal
 
-  onMount(async () => {
-    try {
-      await organisation.init()
-      await apps.load()
-    } catch (error) {
-      notifications.error("Error loading apps")
+  $: userGroups = $groups.filter(group =>
+    group.users.find(user => user._id === $auth.user?._id)
+  )
+  $: publishedApps = $apps.filter(app => app.status === AppStatus.DEPLOYED)
+  $: userApps = getUserApps(publishedApps, userGroups, $auth.user)
+
+  function getUserApps(publishedApps, userGroups, user) {
+    if (sdk.users.isAdmin(user)) {
+      return publishedApps
     }
-    loaded = true
-  })
-
-  const publishedAppsOnly = app => app.status === AppStatus.DEPLOYED
-
-  $: publishedApps = $apps.filter(publishedAppsOnly)
-  $: userApps = $auth.user?.builder?.global
-    ? publishedApps
-    : publishedApps.filter(app =>
-        Object.keys($auth.user?.roles).includes(app.prodId)
-      )
+    return publishedApps.filter(app => {
+      if (sdk.users.isBuilder(user, app.prodId)) {
+        return true
+      }
+      if (!Object.keys(user?.roles).length && user?.userGroups) {
+        return userGroups.find(group => {
+          return groups.actions
+            .getGroupAppIds(group)
+            .map(role => apps.extractAppId(role))
+            .includes(app.appId)
+        })
+      } else {
+        return Object.keys($auth.user?.roles)
+          .map(x => apps.extractAppId(x))
+          .includes(app.appId)
+      }
+    })
+  }
 
   function getUrl(app) {
     if (app.url) {
@@ -60,26 +72,33 @@
       // Swallow error and do nothing
     }
   }
+
+  onMount(async () => {
+    try {
+      await organisation.init()
+      await apps.load()
+      await groups.actions.init()
+    } catch (error) {
+      notifications.error("Error loading apps")
+    }
+    loaded = true
+  })
 </script>
 
 {#if $auth.user && loaded}
   <div class="container">
-    <Page>
+    <Page narrow>
       <div class="content">
         <Layout noPadding>
           <div class="header">
-            <img alt="logo" src={$organisation.logoUrl || Logo} />
+            <img class="logo" alt="logo" src={$organisation.logoUrl || Logo} />
             <ActionMenu align="right">
               <div slot="control" class="avatar">
-                <Avatar
-                  size="M"
-                  initials={$auth.initials}
-                  url={$auth.user.pictureUrl}
-                />
+                <UserAvatar user={$auth.user} showTooltip={false} />
                 <Icon size="XL" name="ChevronDown" />
               </div>
               <MenuItem icon="UserEdit" on:click={() => userInfoModal.show()}>
-                Update user information
+                My profile
               </MenuItem>
               <MenuItem
                 icon="LockClosed"
@@ -87,7 +106,7 @@
               >
                 Update password
               </MenuItem>
-              {#if $auth.isBuilder}
+              {#if sdk.users.hasBuilderPermissions($auth.user)}
                 <MenuItem
                   icon="UserDeveloper"
                   on:click={() => $goto("../portal")}
@@ -100,7 +119,7 @@
           </div>
           <Layout noPadding gap="XS">
             <Heading size="M">
-              Hey {$auth.user.firstName || $auth.user.email}
+              Hey {helpers.getUserLabel($auth.user)}
             </Heading>
             <Body>
               Welcome to the {$organisation.company} portal. Below you'll find the
@@ -108,12 +127,27 @@
             </Body>
           </Layout>
           <Divider />
-          {#if userApps.length}
+          {#if $licensing.usageMetrics?.dayPasses >= 100 || $licensing.errUserLimit}
+            <div>
+              <Layout gap="S" justifyItems="center">
+                <img class="spaceman" alt="spaceman" src={Spaceman} />
+                <Heading size="M">
+                  {"Your apps are currently offline."}
+                </Heading>
+                Please contact the account holder to get them back online.
+              </Layout>
+            </div>
+          {:else if userApps.length}
             <Heading>Apps</Heading>
             <div class="group">
               <Layout gap="S" noPadding>
-                {#each userApps as app, idx (app.appId)}
-                  <a class="app" target="_blank" href={getUrl(app)}>
+                {#each userApps as app (app.appId)}
+                  <a
+                    class="app"
+                    target="_blank"
+                    rel="noreferrer"
+                    href={getUrl(app)}
+                  >
                     <div class="preview" use:gradient={{ seed: app.name }} />
                     <div class="app-info">
                       <Heading size="XS">{app.name}</Heading>
@@ -150,7 +184,7 @@
     </Page>
   </div>
   <Modal bind:this={userInfoModal}>
-    <UpdateUserInfoModal />
+    <ProfileModal />
   </Modal>
   <Modal bind:this={changePasswordModal}>
     <ChangePasswordModal />
@@ -161,6 +195,11 @@
   .container {
     height: 100%;
     overflow: auto;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-start;
+    align-items: center;
+    padding: 80px;
   }
   .content {
     width: 100%;
@@ -171,9 +210,12 @@
     justify-content: space-between;
     align-items: center;
   }
-  img {
+  img.logo {
     width: 40px;
     margin-bottom: -12px;
+  }
+  img.spaceman {
+    width: 100px;
   }
   .avatar {
     display: grid;

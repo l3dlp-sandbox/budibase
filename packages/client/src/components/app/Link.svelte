@@ -1,7 +1,8 @@
 <script>
   import { getContext } from "svelte"
 
-  const { linkable, styleable, builderStore } = getContext("sdk")
+  const { linkable, styleable, builderStore, sidePanelStore } =
+    getContext("sdk")
   const component = getContext("component")
 
   export let url
@@ -61,7 +62,7 @@
   }
 
   const updateText = e => {
-    builderStore.actions.updateProp("text", e.target.textContent.trim())
+    builderStore.actions.updateProp("text", e.target.textContent)
   }
 </script>
 
@@ -103,6 +104,7 @@
         class:italic
         class:underline
         class="align--{align || 'left'} size--{size || 'M'}"
+        on:click={sidePanelStore.actions.close}
       >
         {componentText}
       </a>

@@ -1,19 +1,18 @@
 <script>
-  import { Body, Button, Heading, Icon, Input, Layout } from "@budibase/bbui"
+  import { Body, Heading, Icon, Input, Layout } from "@budibase/bbui"
   import {
     readableToRuntimeBinding,
     runtimeToReadableBinding,
   } from "builderStore/dataBinding"
   import DrawerBindableInput from "components/common/bindings/DrawerBindableInput.svelte"
+  import { createEventDispatcher } from "svelte"
+
+  const dispatch = createEventDispatcher()
 
   export let bindable = true
   export let queryBindings = []
   export let bindings = []
   export let customParams = {}
-
-  function newQueryBinding() {
-    queryBindings = [...queryBindings, {}]
-  }
 
   function deleteQueryBinding(idx) {
     queryBindings.splice(idx, 1)
@@ -24,16 +23,16 @@
   // The readable binding in the UI gets converted to a UUID value that the client understands
   // for parsing, then converted back so we can display it the readable form in the UI
   function onBindingChange(param, valueToParse) {
-    customParams[param] = readableToRuntimeBinding(bindings, valueToParse)
+    dispatch("change", {
+      ...customParams,
+      [param]: readableToRuntimeBinding(bindings, valueToParse),
+    })
   }
 </script>
 
 <Layout noPadding={bindable} gap="S">
   <div class="controls" class:height={!bindable}>
     <Heading size="XS">Bindings</Heading>
-    {#if !bindable}
-      <Button secondary on:click={newQueryBinding}>Add Binding</Button>
-    {/if}
   </div>
   <Body size="S">
     {#if !bindable}
@@ -57,6 +56,7 @@
         placeholder="Default"
         thin
         disabled={bindable}
+        on:change={evt => onBindingChange(binding.name, evt.detail)}
         bind:value={binding.default}
       />
       {#if bindable}

@@ -1,5 +1,6 @@
-const { getAppDB } = require("@budibase/backend-core/context")
+import { context } from "@budibase/backend-core"
 import { isExternalTable } from "../../../integrations/utils"
+import { APP_PREFIX, DocumentType } from "../../../db/utils"
 
 export async function addRev(
   body: { _id?: string; _rev?: string },
@@ -8,14 +9,20 @@ export async function addRev(
   if (!body._id || (tableId && isExternalTable(tableId))) {
     return body
   }
-  const db = getAppDB()
-  const dbDoc = await db.get(body._id)
+  let id = body._id
+  if (body._id.startsWith(APP_PREFIX)) {
+    id = DocumentType.APP_METADATA
+  }
+  const db = context.getAppDB()
+  const dbDoc = await db.get<any>(id)
   body._rev = dbDoc._rev
+  // update ID in case it is an app ID
+  body._id = id
   return body
 }
 
 /**
- * Performs a case insensitive search on the provided documents, using the
+ * Performs a case in-sensitive search on the provided documents, using the
  * provided key and value. This will be a string based search, using the
  * startsWith function.
  */

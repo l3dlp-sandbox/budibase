@@ -2,53 +2,59 @@
   import {
     Heading,
     Layout,
-    Detail,
     Button,
-    Input,
     Select,
     Modal,
     Page,
     notifications,
+    Notification,
     Body,
     Search,
-    Icon,
   } from "@budibase/bbui"
   import Spinner from "components/common/Spinner.svelte"
   import CreateAppModal from "components/start/CreateAppModal.svelte"
-  import UpdateAppModal from "components/start/UpdateAppModal.svelte"
-  import ChooseIconModal from "components/start/ChooseIconModal.svelte"
+  import AppLimitModal from "components/portal/licensing/AppLimitModal.svelte"
+  import AccountLockedModal from "components/portal/licensing/AccountLockedModal.svelte"
+  import { sdk } from "@budibase/shared-core"
 
   import { store, automationStore } from "builderStore"
   import { API } from "api"
   import { onMount } from "svelte"
-  import { apps, auth, admin, templates } from "stores/portal"
-  import download from "downloadjs"
+  import { apps, auth, admin, licensing, environment } from "stores/portal"
   import { goto } from "@roxi/routify"
-  import ConfirmDialog from "components/common/ConfirmDialog.svelte"
   import AppRow from "components/start/AppRow.svelte"
   import { AppStatus } from "constants"
-  import analytics, { Events } from "analytics"
   import Logo from "assets/bb-space-man.svg"
 
   let sortBy = "name"
   let template
-  let selectedApp
   let creationModal
-  let updatingModal
-  let deletionModal
-  let unpublishModal
-  let iconModal
-  let creatingApp = false
-  let loaded = false
+  let appLimitModal
+  let accountLockedModal
   let searchTerm = ""
-  let cloud = $admin.cloud
-  let appName = ""
   let creatingFromTemplate = false
+  let automationErrors
+  let accessFilterList = null
 
+  $: welcomeHeader = `Welcome ${$auth?.user?.firstName || "back"}`
   $: enrichedApps = enrichApps($apps, $auth.user, sortBy)
-  $: filteredApps = enrichedApps.filter(app =>
-    app?.name?.toLowerCase().includes(searchTerm.toLowerCase())
+  $: filteredApps = enrichedApps.filter(
+    app =>
+      (searchTerm
+        ? app?.name?.toLowerCase().includes(searchTerm.toLowerCase())
+        : true) &&
+      (accessFilterList !== null
+        ? accessFilterList?.includes(
+            `${app?.type}_${app?.tenantId}_${app?.appId}`
+          )
+        : true)
   )
+  $: automationErrors = getAutomationErrors(enrichedApps)
+  $: isOwner = $auth.accountPortalAccess && $admin.cloud
+
+  const usersLimitLockAction = $licensing?.errUserLimit
+    ? () => accountLockedModal.show()
+    : null
 
   const enrichApps = (apps, user, sortBy) => {
     const enrichedApps = apps.map(app => ({
@@ -78,35 +84,63 @@
     }
   }
 
-  const initiateAppCreation = () => {
-    template = null
-    creationModal.show()
-    creatingApp = true
+  const getAutomationErrors = apps => {
+    const automationErrors = {}
+    for (let app of apps) {
+      if (app.automationErrors) {
+        if (errorCount(app.automationErrors) > 0) {
+          automationErrors[app.devId] = app.automationErrors
+        }
+      }
+    }
+    return automationErrors
   }
 
-  const initiateAppsExport = () => {
-    try {
-      download(`/api/cloud/export`)
-      notifications.success("Apps exported successfully")
-    } catch (err) {
-      notifications.error(`Error exporting apps: ${err}`)
+  const goToAutomationError = appId => {
+    const params = new URLSearchParams({
+      open: "error",
+    })
+    $goto(
+      `/builder/app/${appId}/settings/automation-history?${params.toString()}`
+    )
+  }
+
+  const errorCount = errors => {
+    return Object.values(errors).reduce((acc, next) => acc + next.length, 0)
+  }
+
+  const automationErrorMessage = appId => {
+    const app = enrichedApps.find(app => app.devId === appId)
+    const errors = automationErrors[appId]
+    return `${app.name} - Automation error (${errorCount(errors)})`
+  }
+
+  const initiateAppCreation = async () => {
+    if ($licensing?.usageMetrics?.apps >= 100) {
+      appLimitModal.show()
+    } else if ($apps?.length) {
+      $goto("/builder/portal/apps/create")
+    } else {
+      template = null
+      creationModal.show()
     }
   }
 
   const initiateAppImport = () => {
     template = { fromFile: true }
     creationModal.show()
-    creatingApp = true
   }
 
   const autoCreateApp = async () => {
     try {
       // Auto name app if has same name
-      let appName = template.key
+      const templateKey = template.key.split("/")[1]
+
+      let appName = templateKey.replace(/-/g, " ")
       const appsWithSameName = $apps.filter(app =>
         app.name?.startsWith(appName)
       )
-      appName = `${appName}-${appsWithSameName.length + 1}`
+      appName = `${appName} ${appsWithSameName.length + 1}`
 
       // Create form data to create app
       let data = new FormData()
@@ -116,12 +150,6 @@
 
       // Create App
       const createdApp = await API.createApp(data)
-      analytics.captureEvent(Events.APP.CREATED, {
-        name: appName,
-        appId: createdApp.instance._id,
-        template,
-        fromTemplateMarketplace: true,
-      })
 
       // Select Correct Application/DB in prep for creating user
       const pkg = await API.fetchAppPackage(createdApp.instance._id)
@@ -143,91 +171,6 @@
 
   const stopAppCreation = () => {
     template = null
-    creatingApp = false
-  }
-
-  const viewApp = app => {
-    if (app.url) {
-      window.open(`/app${app.url}`)
-    } else {
-      window.open(`/${app.prodId}`)
-    }
-  }
-
-  const editApp = app => {
-    if (app.lockedOther) {
-      notifications.error(
-        `App locked by ${app.lockedBy.email}. Please allow lock to expire or have them unlock this app.`
-      )
-      return
-    }
-    $goto(`../../app/${app.devId}`)
-  }
-
-  const editIcon = app => {
-    selectedApp = app
-    iconModal.show()
-  }
-
-  const exportApp = app => {
-    const id = app.deployed ? app.prodId : app.devId
-    const appName = encodeURIComponent(app.name)
-    window.location = `/api/backups/export?appId=${id}&appname=${appName}`
-  }
-
-  const unpublishApp = app => {
-    selectedApp = app
-    unpublishModal.show()
-  }
-
-  const confirmUnpublishApp = async () => {
-    if (!selectedApp) {
-      return
-    }
-    try {
-      await API.unpublishApp(selectedApp.prodId)
-      await apps.load()
-      notifications.success("App unpublished successfully")
-    } catch (err) {
-      notifications.error("Error unpublishing app")
-    }
-  }
-
-  const deleteApp = app => {
-    selectedApp = app
-    deletionModal.show()
-  }
-
-  const confirmDeleteApp = async () => {
-    if (!selectedApp) {
-      return
-    }
-    try {
-      await API.deleteApp(selectedApp?.devId)
-      await apps.load()
-      // Get checklist, just in case that was the last app
-      await admin.init()
-      notifications.success("App deleted successfully")
-    } catch (err) {
-      notifications.error("Error deleting app")
-    }
-    selectedApp = null
-    appName = null
-  }
-
-  const updateApp = async app => {
-    selectedApp = app
-    updatingModal.show()
-  }
-
-  const releaseLock = async app => {
-    try {
-      await API.releaseAppLock(app.devId)
-      await apps.load()
-      notifications.success("Lock released successfully")
-    } catch (err) {
-      notifications.error("Error releasing lock")
-    }
   }
 
   function createAppFromTemplateUrl(templateKey) {
@@ -245,171 +188,119 @@
 
   onMount(async () => {
     try {
-      await apps.load()
-      await templates.load()
-      if ($templates?.length === 0) {
-        notifications.error(
-          "There was a problem loading quick start templates."
-        )
-      }
+      await environment.loadVariables()
       // If the portal is loaded from an external URL with a template param
       const initInfo = await auth.getInitInfo()
       if (initInfo?.init_template) {
         creatingFromTemplate = true
         createAppFromTemplateUrl(initInfo.init_template)
-        return
+      }
+      if (usersLimitLockAction) {
+        usersLimitLockAction()
       }
     } catch (error) {
-      notifications.error("Error loading apps and templates")
+      notifications.error("Error getting init info")
     }
-    loaded = true
   })
 </script>
 
-<Page wide>
-  <Layout noPadding gap="XL">
+<Page>
+  <Layout noPadding gap="L">
+    {#each Object.keys(automationErrors || {}) as appId}
+      <Notification
+        wide
+        dismissable
+        action={() => goToAutomationError(appId)}
+        type="error"
+        icon="Alert"
+        actionMessage={errorCount(automationErrors[appId]) > 1
+          ? "View errors"
+          : "View error"}
+        on:dismiss={async () => {
+          await automationStore.actions.clearLogErrors({ appId })
+          await apps.load()
+        }}
+        message={automationErrorMessage(appId)}
+      />
+    {/each}
     <div class="title">
-      <Layout noPadding gap="XS">
-        <Heading size="M">Welcome to Budibase</Heading>
-        <Body size="S">
-          Manage your apps and get a head start with templates
-        </Body>
-      </Layout>
-
-      <div class="buttons">
-        {#if cloud}
-          <Button
-            size="L"
-            icon="Export"
-            quiet
-            secondary
-            on:click={initiateAppsExport}
-          >
-            Export apps
-          </Button>
-        {/if}
-        <Button
-          icon="Import"
-          size="L"
-          quiet
-          secondary
-          on:click={initiateAppImport}
-        >
-          Import app
-        </Button>
-        <Button size="L" icon="Add" cta on:click={initiateAppCreation}>
-          Create app
-        </Button>
+      <div class="welcome">
+        <Layout noPadding gap="XS">
+          <Heading size="L">{welcomeHeader}</Heading>
+          <Body size="M">
+            Below you'll find the list of apps that you have access to
+          </Body>
+        </Layout>
       </div>
     </div>
 
-    <Layout noPadding gap="S">
-      <Detail size="L">Quick start templates</Detail>
-      <div class="grid">
-        {#each $templates as item}
-          <div
-            on:click={() => {
-              template = item
-              creationModal.show()
-              creatingApp = true
-            }}
-            class="template-card"
-          >
-            <a
-              href={item.url}
-              target="_blank"
-              class="external-link"
-              on:click|stopPropagation
-            >
-              <Icon name="LinkOut" size="S" />
-            </a>
-            <div class="card-body">
-              <div style="color: {item.background}" class="iconAlign">
-                <svg
-                  width="26px"
-                  height="26px"
-                  class="spectrum-Icon"
-                  style="color:{item.background};"
-                  focusable="false"
-                >
-                  <use xlink:href="#spectrum-icon-18-{item.icon}" />
-                </svg>
-              </div>
-              <div class="iconAlign">
-                <Body weight="900" size="S">{item.name}</Body>
-                <div style="font-size: 10px;">
-                  <Body size="S">{item.category.toUpperCase()}</Body>
-                </div>
-              </div>
-            </div>
-          </div>
-        {/each}
-      </div>
-    </Layout>
-
-    {#if loaded && enrichedApps.length}
-      <Layout noPadding gap="S">
+    {#if enrichedApps.length}
+      <Layout noPadding gap="L">
         <div class="title">
-          <Detail size="L">My apps</Detail>
-          <div class="filter">
-            <Select
-              quiet
-              autoWidth
-              bind:value={sortBy}
-              placeholder={null}
-              options={[
-                { label: "Sort by name", value: "name" },
-                { label: "Sort by recently updated", value: "updated" },
-                { label: "Sort by status", value: "status" },
-              ]}
-            />
-            <Search placeholder="Search" bind:value={searchTerm} />
-          </div>
+          {#if $auth.user && sdk.users.isGlobalBuilder($auth.user)}
+            <div class="buttons">
+              <Button
+                size="M"
+                cta
+                on:click={usersLimitLockAction || initiateAppCreation}
+              >
+                Create new app
+              </Button>
+              {#if $apps?.length > 0 && !$admin.offlineMode}
+                <Button
+                  size="M"
+                  secondary
+                  on:click={usersLimitLockAction ||
+                    $goto("/builder/portal/apps/templates")}
+                >
+                  View templates
+                </Button>
+              {/if}
+              {#if !$apps?.length}
+                <Button
+                  size="L"
+                  quiet
+                  secondary
+                  on:click={usersLimitLockAction || initiateAppImport}
+                >
+                  Import app
+                </Button>
+              {/if}
+            </div>
+          {/if}
+          {#if enrichedApps.length > 1}
+            <div class="app-actions">
+              <Select
+                autoWidth
+                bind:value={sortBy}
+                placeholder={null}
+                options={[
+                  { label: "Sort by name", value: "name" },
+                  { label: "Sort by recently updated", value: "updated" },
+                  { label: "Sort by status", value: "status" },
+                ]}
+              />
+              <Search placeholder="Search" bind:value={searchTerm} />
+            </div>
+          {/if}
         </div>
 
-        <div class="appTable">
+        <div class="app-table">
           {#each filteredApps as app (app.appId)}
-            <AppRow
-              {releaseLock}
-              {editIcon}
-              {app}
-              {unpublishApp}
-              {viewApp}
-              {editApp}
-              {exportApp}
-              {deleteApp}
-              {updateApp}
-            />
+            <AppRow {app} lockedAction={usersLimitLockAction} />
           {/each}
         </div>
       </Layout>
-    {/if}
-
-    {#if !enrichedApps.length && !creatingApp && loaded}
-      <div class="empty-wrapper">
-        <div class="centered">
-          <div class="main">
-            <Layout gap="S" justifyItems="center">
-              <img class="img-size" alt="logo" src={Logo} />
-              <div class="new-screen-text">
-                <Detail size="M">Create a business app in minutes!</Detail>
-              </div>
-              <Button on:click={() => initiateAppCreation()} size="M" cta>
-                <div class="new-screen-button">
-                  <div class="background-icon" style="color: white;">
-                    <Icon name="Add" />
-                  </div>
-                  Create App
-                </div></Button
-              >
-            </Layout>
-          </div>
-        </div>
+    {:else}
+      <div class="no-apps">
+        <img class="spaceman" alt="spaceman" src={Logo} width="100px" />
+        <Body weight="700">You haven't been given access to any apps yet</Body>
       </div>
     {/if}
 
     {#if creatingFromTemplate}
       <div class="empty-wrapper">
+        <img class="img-logo img-size" alt="logo" src={Logo} />
         <p>Creating your Budibase app from your selected template...</p>
         <Spinner size="10" />
       </div>
@@ -426,37 +317,12 @@
   <CreateAppModal {template} />
 </Modal>
 
-<Modal bind:this={updatingModal} padding={false} width="600px">
-  <UpdateAppModal app={selectedApp} />
-</Modal>
-
-<ConfirmDialog
-  bind:this={deletionModal}
-  title="Confirm deletion"
-  okText="Delete app"
-  onOk={confirmDeleteApp}
-  onCancel={() => (appName = null)}
-  disabled={appName !== selectedApp?.name}
->
-  Are you sure you want to delete the app <b>{selectedApp?.name}</b>?
-
-  <p>Please enter the app name below to confirm.</p>
-  <Input
-    bind:value={appName}
-    data-cy="delete-app-confirmation"
-    placeholder={selectedApp?.name}
-  />
-</ConfirmDialog>
-<ConfirmDialog
-  bind:this={unpublishModal}
-  title="Confirm unpublish"
-  okText="Unpublish app"
-  onOk={confirmUnpublishApp}
->
-  Are you sure you want to unpublish the app <b>{selectedApp?.name}</b>?
-</ConfirmDialog>
-
-<ChooseIconModal app={selectedApp} bind:this={iconModal} />
+<AppLimitModal bind:this={appLimitModal} />
+<AccountLockedModal
+  bind:this={accountLockedModal}
+  onConfirm={() =>
+    isOwner ? $licensing.goToUpgradePage() : $licensing.goToPricingPage()}
+/>
 
 <style>
   .title {
@@ -475,87 +341,24 @@
     gap: var(--spacing-xl);
     flex-wrap: wrap;
   }
-  @media (max-width: 640px) {
-    .buttons {
-      flex-direction: row-reverse;
-      justify-content: flex-end;
-    }
-  }
-
-  .filter {
+  .app-actions {
     display: flex;
     flex-direction: row;
     justify-content: flex-start;
     align-items: center;
     gap: var(--spacing-xl);
+    flex-wrap: wrap;
+  }
+  .app-actions :global(.spectrum-Textfield) {
+    max-width: 180px;
   }
 
-  .grid {
-    height: 200px;
-    display: grid;
-    overflow: hidden;
-    grid-gap: var(--spacing-xl);
-    grid-template-columns: repeat(auto-fill, minmax(270px, 1fr));
-    grid-template-rows: minmax(70px, 1fr) minmax(100px, 1fr) minmax(0px, 0);
-  }
-  .template-card {
-    height: 70px;
-    border-radius: var(--border-radius-s);
-    border: 1px solid var(--spectrum-global-color-gray-300);
-    cursor: pointer;
+  .app-table {
     display: flex;
-    position: relative;
-  }
-
-  .template-card:hover {
-    background: var(--spectrum-alias-background-color-tertiary);
-  }
-  .card-body {
-    display: flex;
-    align-items: center;
-    padding: 12px;
-  }
-
-  .external-link {
-    position: absolute;
-    top: 5px;
-    right: 5px;
-    color: var(--spectrum-global-color-gray-300);
-    z-index: 99;
-  }
-  .external-link:hover {
-    color: var(--spectrum-global-color-gray-500);
-  }
-
-  .iconAlign {
-    padding: 0 0 0 var(--spacing-m);
-    display: inline-block;
-  }
-
-  .appTable {
-    display: grid;
-    grid-template-rows: auto;
-    grid-template-columns: 1fr 1fr 1fr 1fr auto;
-    align-items: center;
-  }
-  .appTable :global(> div) {
-    height: 70px;
-    display: grid;
-    align-items: center;
-    grid-gap: var(--spacing-xl);
-    grid-template-columns: auto 1fr;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    padding: 0 var(--spacing-s);
-  }
-  .appTable :global(> div) {
-    border-bottom: var(--border-light);
-  }
-  @media (max-width: 640px) {
-    .appTable {
-      grid-template-columns: 1fr auto;
-    }
+    flex-direction: column;
+    justify-content: flex-start;
+    align-items: stretch;
+    gap: var(--spacing-xl);
   }
 
   .empty-wrapper {
@@ -566,42 +369,40 @@
     justify-content: center;
     align-items: center;
   }
-
-  .centered {
-    width: calc(100% - 350px);
-    height: calc(100% - 100px);
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
-    align-items: center;
-  }
-
-  .main {
-    width: 300px;
-  }
-
-  .new-screen-text {
-    width: 160px;
-    text-align: center;
-    color: #2c2c2c;
-    font-weight: 600;
-  }
-
-  .new-screen-button {
-    margin-left: 5px;
-    height: 20px;
-    width: 100px;
-    display: flex;
-    align-items: center;
-  }
-
   .img-size {
     width: 160px;
     height: 160px;
   }
 
-  .background-icon {
-    margin-top: 4px;
-    margin-right: 4px;
+  .no-apps {
+    background-color: var(--spectrum-global-color-gray-100);
+    padding: calc(var(--spacing-xl) * 2);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    flex-direction: column;
+    gap: var(--spacing-xl);
+  }
+
+  @media (max-width: 1000px) {
+    .img-logo {
+      display: none;
+    }
+  }
+  @media (max-width: 640px) {
+    .app-actions {
+      margin-top: var(--spacing-xl);
+      margin-bottom: calc(-1 * var(--spacing-m));
+    }
+    .app-actions :global(.spectrum-Textfield) {
+      max-width: none;
+    }
+    /*  Hide download apps icon */
+    .app-actions :global(> .spectrum-Icon) {
+      display: none;
+    }
+    .app-actions > :global(*) {
+      flex: 1 1 auto;
+    }
   }
 </style>

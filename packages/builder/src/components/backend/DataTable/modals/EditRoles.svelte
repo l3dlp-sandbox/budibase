@@ -1,5 +1,5 @@
 <script>
-  import { ModalContent, Select, Input, Button } from "@budibase/bbui"
+  import { keepOpen, ModalContent, Select, Input, Button } from "@budibase/bbui"
   import { onMount } from "svelte"
   import { API } from "api"
   import { notifications } from "@budibase/bbui"
@@ -12,16 +12,24 @@
   let selectedRole = BASE_ROLE
   let errors = []
   let builtInRoles = ["Admin", "Power", "Basic", "Public"]
+  let validRegex = /^[a-zA-Z0-9_]*$/
   // Don't allow editing of public role
   $: editableRoles = $roles.filter(role => role._id !== "PUBLIC")
   $: selectedRoleId = selectedRole._id
   $: otherRoles = editableRoles.filter(role => role._id !== selectedRoleId)
   $: isCreating = selectedRoleId == null || selectedRoleId === ""
+
+  $: roleNameError = getRoleNameError(selectedRole.name)
+
   $: valid =
     selectedRole.name &&
     selectedRole.inherits &&
     selectedRole.permissionId &&
     !builtInRoles.includes(selectedRole.name)
+
+  $: shouldDisableRoleInput =
+    builtInRoles.includes(selectedRole.name) &&
+    selectedRole.name?.toLowerCase() === selectedRoleId?.toLowerCase()
 
   const fetchBasePermissions = async () => {
     try {
@@ -68,7 +76,7 @@
       errors.push({ message: "Please choose permissions" })
     }
     if (errors.length) {
-      return false
+      return keepOpen
     }
 
     // Save/create the role
@@ -76,8 +84,8 @@
       await roles.save(selectedRole)
       notifications.success("Role saved successfully")
     } catch (error) {
-      notifications.error("Error saving role")
-      return false
+      notifications.error(`Error saving role - ${error.message}`)
+      return keepOpen
     }
   }
 
@@ -88,7 +96,20 @@
       changeRole()
       notifications.success("Role deleted successfully")
     } catch (error) {
-      notifications.error("Error deleting role")
+      notifications.error(`Error deleting role - ${error.message}`)
+      return false
+    }
+  }
+
+  const getRoleNameError = name => {
+    const hasUniqueRoleName = !otherRoles
+      ?.map(role => role.name)
+      ?.includes(name)
+    const invalidRoleName = !validRegex.test(name)
+    if (!hasUniqueRoleName) {
+      return "Select a unique role name."
+    } else if (invalidRoleName) {
+      return "Please enter a role name consisting of only alphanumeric symbols and underscores"
     }
   }
 
@@ -99,7 +120,7 @@
   title="Edit Roles"
   confirmText={isCreating ? "Create" : "Save"}
   onConfirm={saveRole}
-  disabled={!valid}
+  disabled={!valid || roleNameError}
 >
   {#if errors.length}
     <ErrorsBox {errors} />
@@ -119,15 +140,16 @@
     <Input
       label="Name"
       bind:value={selectedRole.name}
-      disabled={builtInRoles.includes(selectedRole.name)}
+      disabled={!!selectedRoleId}
+      error={roleNameError}
     />
     <Select
       label="Inherits Role"
       bind:value={selectedRole.inherits}
-      options={otherRoles}
+      options={selectedRole._id === "BASIC" ? $roles : otherRoles}
       getOptionValue={role => role._id}
       getOptionLabel={role => role.name}
-      disabled={builtInRoles.includes(selectedRole.name)}
+      disabled={shouldDisableRoleInput}
     />
     <Select
       label="Base Permissions"
@@ -135,11 +157,11 @@
       options={basePermissions}
       getOptionValue={x => x._id}
       getOptionLabel={x => x.name}
-      disabled={builtInRoles.includes(selectedRole.name)}
+      disabled={shouldDisableRoleInput}
     />
   {/if}
   <div slot="footer">
-    {#if !isCreating}
+    {#if !isCreating && !builtInRoles.includes(selectedRole.name)}
       <Button warning on:click={deleteRole}>Delete</Button>
     {/if}
   </div>

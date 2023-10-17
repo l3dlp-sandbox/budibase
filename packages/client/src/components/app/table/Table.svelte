@@ -7,19 +7,16 @@
 
   export let dataProvider
   export let columns
-  export let showAutoColumns
   export let rowCount
   export let quiet
   export let size
-  export let linkRows
-  export let linkURL
-  export let linkColumn
-  export let linkPeek
   export let allowSelectRows
   export let compact
+  export let onClick
+  export let noRowsMessage
 
   const component = getContext("component")
-  const { styleable, getAction, ActionTypes, routeStore, rowSelectionStore } =
+  const { styleable, getAction, ActionTypes, rowSelectionStore } =
     getContext("sdk")
   const customColumnKey = `custom-${Math.random()}`
   const customRenderers = [
@@ -28,23 +25,34 @@
       component: SlotRenderer,
     },
   ]
+
   let selectedRows = []
+
   $: hasChildren = $component.children
   $: loading = dataProvider?.loading ?? false
   $: data = dataProvider?.rows || []
   $: fullSchema = dataProvider?.schema ?? {}
-  $: fields = getFields(fullSchema, columns, showAutoColumns)
+  $: fields = getFields(fullSchema, columns, false)
   $: schema = getFilteredSchema(fullSchema, fields, hasChildren)
   $: setSorting = getAction(
     dataProvider?.id,
     ActionTypes.SetDataProviderSorting
   )
+  $: table = dataProvider?.datasource?.type === "table"
   $: {
     rowSelectionStore.actions.updateSelection(
       $component.id,
       selectedRows.length ? selectedRows[0].tableId : "",
       selectedRows.map(row => row._id)
     )
+  }
+
+  // If the data changes, double check that the selected elements are still present.
+  $: if (data) {
+    let rowIds = data.map(row => row._id)
+    if (rowIds.length) {
+      selectedRows = selectedRows.filter(row => rowIds.includes(row._id))
+    }
   }
 
   const getFields = (schema, customColumns, showAutoColumns) => {
@@ -84,6 +92,7 @@
         sortable: false,
         divider: true,
         width: "auto",
+        preventSelectRow: true,
       }
     }
 
@@ -115,17 +124,10 @@
     })
   }
 
-  const onClick = e => {
-    if (!linkRows || !linkURL) {
-      return
+  const handleClick = e => {
+    if (onClick) {
+      onClick({ row: e.detail })
     }
-    const col = linkColumn || "_id"
-    const id = e.detail?.[col]
-    if (!id) {
-      return
-    }
-    const split = linkURL.split("/:")
-    routeStore.actions.navigate(`${split[0]}/${id}`, linkPeek)
   }
 
   onDestroy(() => {
@@ -142,7 +144,7 @@
     {quiet}
     {compact}
     {customRenderers}
-    allowSelectRows={!!allowSelectRows}
+    allowSelectRows={allowSelectRows && table}
     bind:selectedRows
     allowEditRows={false}
     allowEditColumns={false}
@@ -150,7 +152,8 @@
     disableSorting
     autoSortColumns={!columns?.length}
     on:sort={onSort}
-    on:click={onClick}
+    on:click={handleClick}
+    placeholderText={noRowsMessage || "No rows found"}
   >
     <slot />
   </Table>
@@ -165,7 +168,6 @@
   div {
     background-color: var(--spectrum-alias-background-color-secondary);
   }
-
   .row-count {
     margin-top: var(--spacing-l);
   }

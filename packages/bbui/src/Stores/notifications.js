@@ -20,7 +20,18 @@ export const createNotificationStore = () => {
     setTimeout(() => (block = false), timeout)
   }
 
-  const send = (message, type = "default", icon = "", autoDismiss = true) => {
+  const send = (
+    message,
+    {
+      type = "default",
+      icon = "",
+      autoDismiss = true,
+      action = null,
+      actionMessage = null,
+      wide = false,
+      dismissTimeout = NOTIFICATION_TIMEOUT,
+    }
+  ) => {
     if (block) {
       return
     }
@@ -28,13 +39,23 @@ export const createNotificationStore = () => {
     _notifications.update(state => {
       return [
         ...state,
-        { id: _id, type, message, icon, dismissable: !autoDismiss },
+        {
+          id: _id,
+          type,
+          message,
+          icon,
+          dismissable: !autoDismiss,
+          action,
+          actionMessage,
+          wide,
+          dismissTimeout,
+        },
       ]
     })
     if (autoDismiss) {
       const timeoutId = setTimeout(() => {
         dismissNotification(_id)
-      }, NOTIFICATION_TIMEOUT)
+      }, dismissTimeout)
       timeoutIds.add(timeoutId)
     }
   }
@@ -50,10 +71,11 @@ export const createNotificationStore = () => {
   return {
     subscribe,
     send,
-    info: msg => send(msg, "info", "Info"),
-    error: msg => send(msg, "error", "Alert", false),
-    warning: msg => send(msg, "warning", "Alert"),
-    success: msg => send(msg, "success", "CheckmarkCircle"),
+    info: msg => send(msg, { type: "info", icon: "Info" }),
+    error: msg =>
+      send(msg, { type: "error", icon: "Alert", autoDismiss: false }),
+    warning: msg => send(msg, { type: "warning", icon: "Alert" }),
+    success: msg => send(msg, { type: "success", icon: "CheckmarkCircle" }),
     blockNotifications,
     dismiss: dismissNotification,
   }

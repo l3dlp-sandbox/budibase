@@ -7,7 +7,7 @@
     Label,
     notifications,
   } from "@budibase/bbui"
-  import { automationStore } from "builderStore"
+  import { automationStore, selectedAutomation } from "builderStore"
   import AutomationBlockSetup from "../../SetupPanel/AutomationBlockSetup.svelte"
   import { cloneDeep } from "lodash/fp"
 
@@ -15,20 +15,22 @@
   let trigger = {}
   let schemaProperties = {}
 
-  // clone the trigger so we're not mutating the reference
-  $: trigger = cloneDeep(
-    $automationStore.selectedAutomation.automation.definition.trigger
-  )
+  $: {
+    // clone the trigger so we're not mutating the reference
+    trigger = cloneDeep($selectedAutomation.definition.trigger)
 
-  // get the outputs so we can define the fields
-  $: schemaProperties = Object.entries(trigger?.schema?.outputs?.properties)
+    // get the outputs so we can define the fields
+    let schema = Object.entries(trigger.schema?.outputs?.properties || {})
 
-  if (!$automationStore.selectedAutomation.automation.testData) {
-    $automationStore.selectedAutomation.automation.testData = {}
+    if (trigger?.event === "app:trigger") {
+      schema = [["fields", { customType: "fields" }]]
+    }
+
+    schemaProperties = schema
   }
 
   // check to see if there is existing test data in the store
-  $: testData = $automationStore.selectedAutomation.automation.testData || {}
+  $: testData = $selectedAutomation.testData || {}
 
   // Check the schema to see if required fields have been entered
   $: isError = !trigger.schema.outputs.required.every(
@@ -47,12 +49,10 @@
 
   const testAutomation = async () => {
     try {
-      await automationStore.actions.test(
-        $automationStore.selectedAutomation?.automation,
-        testData
-      )
+      await automationStore.actions.test($selectedAutomation, testData)
+      $automationStore.showTestPanel = true
     } catch (error) {
-      notifications.error("Error testing notification")
+      notifications.error(error)
     }
   }
 </script>
@@ -65,8 +65,8 @@
   onConfirm={testAutomation}
   cancelText="Cancel"
 >
-  <Tabs selected="Form" quiet
-    ><Tab icon="Form" title="Form">
+  <Tabs selected="Form" quiet>
+    <Tab icon="Form" title="Form">
       <div class="tab-content-padding">
         <AutomationBlockSetup
           {testData}
@@ -81,11 +81,7 @@
         <Label>JSON</Label>
         <div class="text-area-container">
           <TextArea
-            value={JSON.stringify(
-              $automationStore.selectedAutomation.automation.testData,
-              null,
-              2
-            )}
+            value={JSON.stringify($selectedAutomation.testData, null, 2)}
             error={failedParse}
             on:change={e => parseTestJSON(e)}
           />

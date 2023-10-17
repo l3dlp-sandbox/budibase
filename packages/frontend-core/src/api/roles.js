@@ -29,4 +29,22 @@ export const buildRoleEndpoints = API => ({
       url: "/api/roles",
     })
   },
+
+  /**
+   * Gets a list of roles within a specified app.
+   */
+  getRolesForApp: async appId => {
+    return await API.get({
+      url: `/api/global/roles/${appId}`,
+    })
+  },
+
+  /**
+   * For the logged in user and current app - retrieves accessible roles.
+   */
+  getAccessibleRoles: async () => {
+    return await API.get({
+      url: `/api/roles/accessible`,
+    })
+  },
 })

@@ -1,7 +1,6 @@
 <script>
   import { getContext } from "svelte"
-  import { ProgressCircle, Pagination } from "@budibase/bbui"
-  import Placeholder from "./Placeholder.svelte"
+  import { Pagination, ProgressCircle } from "@budibase/bbui"
   import { fetchData, LuceneUtils } from "@budibase/frontend-core"
 
   export let dataSource
@@ -20,7 +19,7 @@
   $: defaultQuery = LuceneUtils.buildLuceneQuery(filter)
   $: query = extendQuery(defaultQuery, queryExtensions)
 
-  // Keep our data fetch instance up to date
+  // Fetch data and refresh when needed
   $: fetch = createFetch(dataSource)
   $: fetch.update({
     query,
@@ -29,6 +28,9 @@
     limit,
     paginate,
   })
+
+  // Sanitize schema to remove hidden fields
+  $: schema = sanitizeSchema($fetch.schema)
 
   // Build our action context
   $: actions = [
@@ -67,7 +69,7 @@
     rows: $fetch.rows,
     info: $fetch.info,
     datasource: dataSource || {},
-    schema: $fetch.schema,
+    schema,
     rowsLength: $fetch.rows.length,
 
     // Undocumented properties. These aren't supposed to be used in builder
@@ -78,7 +80,7 @@
       sortColumn: $fetch.sortColumn,
       sortOrder: $fetch.sortOrder,
     },
-    loaded: $fetch.loaded,
+    limit,
   }
 
   const createFetch = datasource => {
@@ -93,6 +95,19 @@
         paginate,
       },
     })
+  }
+
+  const sanitizeSchema = schema => {
+    if (!schema) {
+      return schema
+    }
+    let cloned = { ...schema }
+    Object.entries(cloned).forEach(([field, fieldSchema]) => {
+      if (fieldSchema.visible === false) {
+        delete cloned[field]
+      }
+    })
+    return cloned
   }
 
   const addQueryExtension = (key, extension) => {
@@ -133,11 +148,7 @@
         <ProgressCircle />
       </div>
     {:else}
-      {#if $component.emptyState}
-        <Placeholder />
-      {:else}
-        <slot />
-      {/if}
+      <slot />
       {#if paginate && $fetch.supportsPagination}
         <div class="pagination">
           <Pagination

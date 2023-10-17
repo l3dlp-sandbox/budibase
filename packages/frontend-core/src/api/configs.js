@@ -21,6 +21,17 @@ export const buildConfigEndpoints = API => ({
   },
 
   /**
+   * Deletes a global config
+   * @param id the id of the config to delete
+   * @param rev the revision of the config to delete
+   */
+  deleteConfig: async ({ id, rev }) => {
+    return await API.delete({
+      url: `/api/global/configs/${id}/${rev}`,
+    })
+  },
+
+  /**
    * Gets the config for a certain tenant.
    * @param tenantId the tenant ID to get the config for
    */
@@ -57,6 +68,18 @@ export const buildConfigEndpoints = API => ({
   uploadLogo: async data => {
     return await API.post({
       url: "/api/global/configs/upload/settings/logoUrl",
+      body: data,
+      json: false,
+    })
+  },
+
+  /**
+   * Updates the company favicon for the environment.
+   * @param data the favicon form data
+   */
+  uploadFavicon: async data => {
+    return await API.post({
+      url: "/api/global/configs/upload/settings/faviconUrl",
       body: data,
       json: false,
     })

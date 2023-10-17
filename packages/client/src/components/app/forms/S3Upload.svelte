@@ -2,6 +2,7 @@
   import Field from "./Field.svelte"
   import { CoreDropzone, ProgressCircle } from "@budibase/bbui"
   import { getContext, onMount, onDestroy } from "svelte"
+  import { cloneDeep } from "../../../../../bbui/src/helpers"
 
   export let datasourceId
   export let bucket
@@ -10,9 +11,18 @@
   export let label
   export let disabled = false
   export let validation
+  export let onChange
 
   let fieldState
   let fieldApi
+  let localFiles = []
+
+  $: {
+    // If the field state is reset, clear the local files
+    if (!fieldState?.value?.length) {
+      localFiles = []
+    }
+  }
 
   const { API, notificationStore, uploadStore } = getContext("sdk")
   const component = getContext("component")
@@ -88,6 +98,21 @@
     }
   }
 
+  const handleChange = e => {
+    localFiles = e.detail
+    let files = cloneDeep(e.detail) || []
+    // remove URL as it contains the full base64 image data
+    files.forEach(file => {
+      if (file.type?.startsWith("image")) {
+        delete file.url
+      }
+    })
+    const changed = fieldApi.setValue(files)
+    if (onChange && changed) {
+      onChange({ value: files })
+    }
+  }
+
   onMount(() => {
     uploadStore.actions.registerFileUpload($component.id, upload)
   })
@@ -110,12 +135,10 @@
   <div class="content">
     {#if fieldState}
       <CoreDropzone
-        value={fieldState.value}
+        value={localFiles}
         disabled={loading || fieldState.disabled}
         error={fieldState.error}
-        on:change={e => {
-          fieldApi.setValue(e.detail)
-        }}
+        on:change={handleChange}
         {processFiles}
         {handleFileTooLarge}
         maximum={1}

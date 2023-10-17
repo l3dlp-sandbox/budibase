@@ -1,60 +1,74 @@
-import { SourceNames, SqlQuery } from "../definitions/datasource"
-import { Datasource, Table } from "../definitions/common"
-import { DocumentTypes, SEPARATOR } from "../db/utils"
-import { FieldTypes, BuildSchemaErrors, InvalidColumns } from "../constants"
+import {
+  SqlQuery,
+  Table,
+  SearchFilters,
+  Datasource,
+  FieldType,
+} from "@budibase/types"
+import { DocumentType, SEPARATOR } from "../db/utils"
+import {
+  BuildSchemaErrors,
+  InvalidColumns,
+  NoEmptyFilterStrings,
+} from "../constants"
+import { helpers } from "@budibase/shared-core"
 
 const DOUBLE_SEPARATOR = `${SEPARATOR}${SEPARATOR}`
 const ROW_ID_REGEX = /^\[.*]$/g
+const ENCODED_SPACE = encodeURIComponent(" ")
 
 const SQL_NUMBER_TYPE_MAP = {
-  integer: FieldTypes.NUMBER,
-  int: FieldTypes.NUMBER,
-  bigint: FieldTypes.NUMBER,
-  decimal: FieldTypes.NUMBER,
-  smallint: FieldTypes.NUMBER,
-  real: FieldTypes.NUMBER,
-  float: FieldTypes.NUMBER,
-  numeric: FieldTypes.NUMBER,
-  mediumint: FieldTypes.NUMBER,
-  dec: FieldTypes.NUMBER,
-  double: FieldTypes.NUMBER,
-  fixed: FieldTypes.NUMBER,
-  "double precision": FieldTypes.NUMBER,
-  number: FieldTypes.NUMBER,
-  binary_float: FieldTypes.NUMBER,
-  binary_double: FieldTypes.NUMBER,
-  money: FieldTypes.NUMBER,
-  smallmoney: FieldTypes.NUMBER,
+  integer: FieldType.NUMBER,
+  int: FieldType.NUMBER,
+  decimal: FieldType.NUMBER,
+  smallint: FieldType.NUMBER,
+  real: FieldType.NUMBER,
+  float: FieldType.NUMBER,
+  numeric: FieldType.NUMBER,
+  mediumint: FieldType.NUMBER,
+  dec: FieldType.NUMBER,
+  double: FieldType.NUMBER,
+  fixed: FieldType.NUMBER,
+  "double precision": FieldType.NUMBER,
+  number: FieldType.NUMBER,
+  binary_float: FieldType.NUMBER,
+  binary_double: FieldType.NUMBER,
+  money: FieldType.NUMBER,
+  smallmoney: FieldType.NUMBER,
 }
 
 const SQL_DATE_TYPE_MAP = {
-  timestamp: FieldTypes.DATETIME,
-  time: FieldTypes.DATETIME,
-  datetime: FieldTypes.DATETIME,
-  smalldatetime: FieldTypes.DATETIME,
-  date: FieldTypes.DATETIME,
+  timestamp: FieldType.DATETIME,
+  time: FieldType.DATETIME,
+  datetime: FieldType.DATETIME,
+  smalldatetime: FieldType.DATETIME,
+  date: FieldType.DATETIME,
 }
 
+const SQL_DATE_ONLY_TYPES = ["date"]
+const SQL_TIME_ONLY_TYPES = ["time"]
+
 const SQL_STRING_TYPE_MAP = {
-  varchar: FieldTypes.STRING,
-  char: FieldTypes.STRING,
-  nchar: FieldTypes.STRING,
-  nvarchar: FieldTypes.STRING,
-  ntext: FieldTypes.STRING,
-  enum: FieldTypes.STRING,
-  blob: FieldTypes.LONGFORM,
-  long: FieldTypes.LONGFORM,
-  text: FieldTypes.LONGFORM,
+  varchar: FieldType.STRING,
+  char: FieldType.STRING,
+  nchar: FieldType.STRING,
+  nvarchar: FieldType.STRING,
+  ntext: FieldType.STRING,
+  enum: FieldType.STRING,
+  blob: FieldType.STRING,
+  long: FieldType.STRING,
+  text: FieldType.STRING,
 }
 
 const SQL_BOOLEAN_TYPE_MAP = {
-  boolean: FieldTypes.BOOLEAN,
-  bit: FieldTypes.BOOLEAN,
-  tinyint: FieldTypes.BOOLEAN,
+  boolean: FieldType.BOOLEAN,
+  bit: FieldType.BOOLEAN,
+  tinyint: FieldType.BOOLEAN,
 }
 
 const SQL_MISC_TYPE_MAP = {
-  json: FieldTypes.JSON,
+  json: FieldType.JSON,
+  bigint: FieldType.BIGINT,
 }
 
 const SQL_TYPE_MAP = {
@@ -65,7 +79,7 @@ const SQL_TYPE_MAP = {
   ...SQL_MISC_TYPE_MAP,
 }
 
-export enum SqlClients {
+export enum SqlClient {
   MS_SQL = "mssql",
   POSTGRES = "pg",
   MY_SQL = "mysql2",
@@ -73,10 +87,14 @@ export enum SqlClients {
 }
 
 export function isExternalTable(tableId: string) {
-  return tableId.includes(DocumentTypes.DATASOURCE)
+  return tableId.includes(DocumentType.DATASOURCE)
 }
 
 export function buildExternalTableId(datasourceId: string, tableName: string) {
+  // encode spaces
+  if (tableName.includes(" ")) {
+    tableName = encodeURIComponent(tableName)
+  }
   return `${datasourceId}${DOUBLE_SEPARATOR}${tableName}`
 }
 
@@ -85,9 +103,13 @@ export function breakExternalTableId(tableId: string | undefined) {
     return {}
   }
   const parts = tableId.split(DOUBLE_SEPARATOR)
-  let tableName = parts.pop()
+  let datasourceId = parts.shift()
   // if they need joined
-  let datasourceId = parts.join(DOUBLE_SEPARATOR)
+  let tableName = parts.join(DOUBLE_SEPARATOR)
+  // if contains encoded spaces, decode it
+  if (tableName.includes(ENCODED_SPACE)) {
+    tableName = decodeURIComponent(tableName)
+  }
   return { datasourceId, tableName }
 }
 
@@ -137,12 +159,26 @@ export function breakRowIdField(_id: string | { _id: string }): any[] {
 }
 
 export function convertSqlType(type: string) {
+  let foundType = FieldType.STRING
+  const lcType = type.toLowerCase()
+  let matchingTypes = []
   for (let [external, internal] of Object.entries(SQL_TYPE_MAP)) {
-    if (type.toLowerCase().includes(external)) {
-      return internal
+    if (lcType.includes(external)) {
+      matchingTypes.push({ external, internal })
     }
   }
-  return FieldTypes.STRING
+  //Set the foundType based the longest match
+  if (matchingTypes.length > 0) {
+    foundType = matchingTypes.reduce((acc, val) => {
+      return acc.external.length >= val.external.length ? acc : val
+    }).internal
+  }
+  const schema: any = { type: foundType }
+  if (foundType === FieldType.DATETIME) {
+    schema.dateOnly = SQL_DATE_ONLY_TYPES.includes(lcType)
+    schema.timeOnly = SQL_TIME_ONLY_TYPES.includes(lcType)
+  }
+  return schema
 }
 
 export function getSqlQuery(query: SqlQuery | string): SqlQuery {
@@ -153,25 +189,17 @@ export function getSqlQuery(query: SqlQuery | string): SqlQuery {
   }
 }
 
-export function isSQL(datasource: Datasource): boolean {
-  if (!datasource || !datasource.source) {
-    return false
-  }
-  const SQL = [
-    SourceNames.POSTGRES,
-    SourceNames.SQL_SERVER,
-    SourceNames.MYSQL,
-    SourceNames.ORACLE,
-  ]
-  return SQL.indexOf(datasource.source) !== -1
+export function isSQL(datasource: Datasource) {
+  return helpers.isSQL(datasource)
 }
 
 export function isIsoDateString(str: string) {
-  if (!/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}.\d{3}Z/.test(str)) {
+  const trimmedValue = str.trim()
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}.\d{3}Z$/.test(trimmedValue)) {
     return false
   }
-  let d = new Date(str)
-  return d.toISOString() === str
+  let d = new Date(trimmedValue)
+  return d.toISOString() === trimmedValue
 }
 
 /**
@@ -184,12 +212,12 @@ export function isIsoDateString(str: string) {
  * @param column The column to check, to see if it is a valid relationship.
  * @param tableIds The IDs of the tables which currently exist.
  */
-function shouldCopyRelationship(
+export function shouldCopyRelationship(
   column: { type: string; tableId?: string },
-  tableIds: [string]
+  tableIds: string[]
 ) {
   return (
-    column.type === FieldTypes.LINK &&
+    column.type === FieldType.LINK &&
     column.tableId &&
     tableIds.includes(column.tableId)
   )
@@ -203,15 +231,27 @@ function shouldCopyRelationship(
  * @param column The column to check for options or boolean type.
  * @param fetchedColumn The fetched column to check for the type in the external database.
  */
-function shouldCopySpecialColumn(
+export function shouldCopySpecialColumn(
   column: { type: string },
   fetchedColumn: { type: string } | undefined
 ) {
+  const isFormula = column.type === FieldType.FORMULA
+  const specialTypes = [
+    FieldType.OPTIONS,
+    FieldType.LONGFORM,
+    FieldType.ARRAY,
+    FieldType.FORMULA,
+    FieldType.BB_REFERENCE,
+  ]
+  // column has been deleted, remove - formulas will never exist, always copy
+  if (!isFormula && column && !fetchedColumn) {
+    return false
+  }
+  const fetchedIsNumber =
+    !fetchedColumn || fetchedColumn.type === FieldType.NUMBER
   return (
-    column.type === FieldTypes.OPTIONS ||
-    column.type === FieldTypes.ARRAY ||
-    ((!fetchedColumn || fetchedColumn.type === FieldTypes.NUMBER) &&
-      column.type === FieldTypes.BOOLEAN)
+    specialTypes.indexOf(column.type as FieldType) !== -1 ||
+    (fetchedIsNumber && column.type === FieldType.BOOLEAN)
   )
 }
 
@@ -230,8 +270,11 @@ function copyExistingPropsOver(
   tableIds: [string]
 ) {
   if (entities && entities[tableName]) {
-    if (entities[tableName].primaryDisplay) {
+    if (entities[tableName]?.primaryDisplay) {
       table.primaryDisplay = entities[tableName].primaryDisplay
+    }
+    if (entities[tableName]?.created) {
+      table.created = entities[tableName]?.created
     }
     const existingTableSchema = entities[tableName].schema
     for (let key in existingTableSchema) {
@@ -272,7 +315,11 @@ export function finaliseExternalTables(
     if (table.primary == null || table.primary.length === 0) {
       errors[name] = BuildSchemaErrors.NO_KEY
       continue
-    } else if (schemaFields.find(field => invalidColumns.includes(field))) {
+    } else if (
+      schemaFields.find(field =>
+        invalidColumns.includes(field as InvalidColumns)
+      )
+    ) {
       errors[name] = BuildSchemaErrors.INVALID_COLUMN
       continue
     }
@@ -284,4 +331,61 @@ export function finaliseExternalTables(
     .sort(([a], [b]) => a.localeCompare(b))
     .reduce((r, [k, v]) => ({ ...r, [k]: v }), {})
   return { tables: finalTables, errors }
+}
+
+/**
+ * Checks if the provided input is an object, but specifically not a date type object.
+ * Used during coercion of types and relationship handling, dates are considered valid
+ * and can be used as a display field, but objects and arrays cannot.
+ * @param testValue an unknown type which this function will attempt to extract
+ * a valid primary display string from.
+ */
+export function getPrimaryDisplay(testValue: unknown): string | undefined {
+  if (testValue instanceof Date) {
+    return testValue.toISOString()
+  }
+  if (
+    Array.isArray(testValue) &&
+    testValue[0] &&
+    typeof testValue[0] !== "object"
+  ) {
+    return testValue.join(", ")
+  }
+  if (typeof testValue === "object") {
+    return undefined
+  }
+  return testValue as string
+}
+
+export function isValidFilter(value: any) {
+  return value != null && value !== ""
+}
+
+// don't do a pure falsy check, as 0 is included
+// https://github.com/Budibase/budibase/issues/10118
+export function removeEmptyFilters(filters: SearchFilters) {
+  for (let filterField of NoEmptyFilterStrings) {
+    if (!filters[filterField]) {
+      continue
+    }
+
+    for (let filterType of Object.keys(filters)) {
+      if (filterType !== filterField) {
+        continue
+      }
+      // don't know which one we're checking, type could be anything
+      const value = filters[filterType] as unknown
+      if (typeof value === "object") {
+        for (let [key, value] of Object.entries(
+          filters[filterType] as object
+        )) {
+          if (value == null || value === "") {
+            // @ts-ignore
+            delete filters[filterField][key]
+          }
+        }
+      }
+    }
+  }
+  return filters
 }

@@ -15,53 +15,121 @@
   export let placeholder = null
   export let appendTo = undefined
   export let timeOnly = false
+  export let ignoreTimezones = false
+  export let time24hr = false
+  export let range = false
+  export let flatpickr
+  export let useKeyboardShortcuts = true
 
   const dispatch = createEventDispatcher()
   const flatpickrId = `${uuid()}-wrapper`
-  let open = false
-  let flatpickr, flatpickrOptions, isTimeOnly
 
-  $: isTimeOnly = !timeOnly && value ? !isNaN(new Date(`0-${value}`)) : timeOnly
+  let open = false
+  let flatpickrOptions
+
+  // Another classic flatpickr issue. Errors were randomly being thrown due to
+  // flatpickr internal code. Making sure that "destroy" is a valid function
+  // fixes it. The sooner we remove flatpickr the better.
+  $: {
+    if (flatpickr && !flatpickr.destroy) {
+      flatpickr.destroy = () => {}
+    }
+  }
+
+  const resolveTimeStamp = timestamp => {
+    let maskedDate = new Date(`0-${timestamp}`)
+
+    if (maskedDate instanceof Date && !isNaN(maskedDate.getTime())) {
+      return maskedDate
+    } else {
+      return null
+    }
+  }
+
   $: flatpickrOptions = {
     element: `#${flatpickrId}`,
-    enableTime: isTimeOnly || enableTime || false,
-    noCalendar: isTimeOnly || false,
+    enableTime: timeOnly || enableTime || false,
+    noCalendar: timeOnly || false,
     altInput: true,
-    altFormat: isTimeOnly ? "H:i" : enableTime ? "F j Y, H:i" : "F j, Y",
+    time_24hr: time24hr || false,
+    altFormat: timeOnly ? "H:i" : enableTime ? "F j Y, H:i" : "F j, Y",
     wrap: true,
+    mode: range ? "range" : "single",
     appendTo,
     disableMobile: "true",
+    onReady: () => {
+      let timestamp = resolveTimeStamp(value)
+      if (timeOnly && timestamp) {
+        dispatch("change", timestamp.toISOString())
+      }
+    },
+    onOpen: () => dispatch("open"),
+    onClose: () => dispatch("close"),
+  }
+
+  $: redrawOptions = {
+    timeOnly,
+    enableTime,
+    time24hr,
+    disabled,
   }
 
   const handleChange = event => {
     const [dates] = event.detail
+    const noTimezone = enableTime && !timeOnly && ignoreTimezones
     let newValue = dates[0]
     if (newValue) {
       newValue = newValue.toISOString()
     }
-    // if time only set date component to today
+    // If time only set date component to 2000-01-01
     if (timeOnly) {
-      const todayDate = new Date().toISOString().split("T")[0]
-      newValue = `${todayDate}T${newValue.split("T")[1]}`
+      newValue = `2000-01-01T${newValue.split("T")[1]}`
     }
-    dispatch("change", newValue)
+
+    // For date-only fields, construct a manual timestamp string without a time
+    // or time zone
+    else if (!enableTime) {
+      const year = dates[0].getFullYear()
+      const month = `${dates[0].getMonth() + 1}`.padStart(2, "0")
+      const day = `${dates[0].getDate()}`.padStart(2, "0")
+      newValue = `${year}-${month}-${day}T00:00:00.000`
+    }
+
+    // For non-timezone-aware fields, create an ISO 8601 timestamp of the exact
+    // time picked, without timezone
+    else if (noTimezone) {
+      const offset = dates[0].getTimezoneOffset() * 60000
+      newValue = new Date(dates[0].getTime() - offset)
+        .toISOString()
+        .slice(0, -1)
+    }
+
+    if (range) {
+      dispatch("change", event.detail)
+    } else {
+      dispatch("change", newValue)
+    }
   }
 
   const clearDateOnBackspace = event => {
     if (["Backspace", "Clear", "Delete"].includes(event.key)) {
-      dispatch("change", null)
+      dispatch("change", "")
       flatpickr.close()
     }
   }
 
   const onOpen = () => {
     open = true
-    document.addEventListener("keyup", clearDateOnBackspace)
+    if (useKeyboardShortcuts) {
+      document.addEventListener("keyup", clearDateOnBackspace)
+    }
   }
 
   const onClose = () => {
     open = false
-    document.removeEventListener("keyup", clearDateOnBackspace)
+    if (useKeyboardShortcuts) {
+      document.removeEventListener("keyup", clearDateOnBackspace)
+    }
 
     // Manually blur all input fields since flatpickr creates a second
     // duplicate input field.
@@ -76,10 +144,13 @@
       return null
     }
     let date
-    let time = new Date(`0-${val}`)
+    let time
+
     // it is a string like 00:00:00, just time
-    if (timeOnly || (typeof val === "string" && !isNaN(time))) {
-      date = time
+    let ts = resolveTimeStamp(val)
+
+    if (timeOnly && ts) {
+      date = ts
     } else if (val instanceof Date) {
       // Use real date obj if already parsed
       date = val
@@ -90,10 +161,12 @@
       // Treat as numerical timestamp
       date = new Date(parseInt(val))
     }
+
     time = date.getTime()
     if (isNaN(time)) {
       return null
     }
+
     // By rounding to the nearest second we avoid locking up in an endless
     // loop in the builder, caused by potentially enriching {{ now }} to every
     // millisecond.
@@ -101,10 +174,10 @@
   }
 </script>
 
-{#key isTimeOnly}
+{#key redrawOptions}
   <Flatpickr
     bind:flatpickr
-    value={parseDate(value)}
+    value={range ? value : parseDate(value)}
     on:open={onOpen}
     on:close={onClose}
     options={flatpickrOptions}
@@ -137,10 +210,11 @@
           </svg>
         {/if}
         <input
+          {disabled}
           data-input
           type="text"
-          {disabled}
           class="spectrum-Textfield-input spectrum-InputGroup-input"
+          class:is-disabled={disabled}
           {placeholder}
           {id}
           {value}
@@ -150,7 +224,7 @@
         type="button"
         class="spectrum-Picker spectrum-Picker--sizeM spectrum-InputGroup-button"
         tabindex="-1"
-        {disabled}
+        class:is-disabled={disabled}
         class:is-invalid={!!error}
         on:click={flatpickr?.open}
       >
@@ -191,8 +265,12 @@
     width: 100vw;
     height: 100vh;
     z-index: 999;
+    max-height: 100%;
   }
   :global(.flatpickr-calendar) {
-    font-family: "Source Sans Pro", sans-serif;
+    font-family: var(--font-sans);
+  }
+  .is-disabled {
+    pointer-events: none !important;
   }
 </style>

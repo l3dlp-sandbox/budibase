@@ -4,10 +4,10 @@ export const buildAutomationEndpoints = API => ({
    * @param automationId the ID of the automation to trigger
    * @param fields the fields to trigger the automation with
    */
-  triggerAutomation: async ({ automationId, fields }) => {
+  triggerAutomation: async ({ automationId, fields, timeout }) => {
     return await API.post({
       url: `/api/automations/${automationId}/trigger`,
-      body: { fields },
+      body: { fields, timeout },
     })
   },
 
@@ -71,6 +71,41 @@ export const buildAutomationEndpoints = API => ({
   deleteAutomation: async ({ automationId, automationRev }) => {
     return await API.delete({
       url: `/api/automations/${automationId}/${automationRev}`,
+    })
+  },
+
+  /**
+   * Get the logs for the app, or by automation ID.
+   * @param automationId The ID of the automation to get logs for.
+   * @param startDate An ISO date string to state the start of the date range.
+   * @param status The status, error or success.
+   * @param page The page to retrieve.
+   */
+  getAutomationLogs: async ({ automationId, startDate, status, page }) => {
+    return await API.post({
+      url: "/api/automations/logs/search",
+      body: {
+        automationId,
+        startDate,
+        status,
+        page,
+      },
+    })
+  },
+
+  /**
+   * Clears automation log errors (which are creating notification) for
+   * automation or the app.
+   * @param automationId optional - the ID of the automation to clear errors for.
+   * @param appId The app ID to clear errors for.
+   */
+  clearAutomationLogErrors: async ({ automationId, appId }) => {
+    return await API.delete({
+      url: "/api/automations/logs",
+      body: {
+        appId,
+        automationId,
+      },
     })
   },
 })

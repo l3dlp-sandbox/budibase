@@ -1,6 +1,4 @@
 <script>
-  import { goto } from "@roxi/routify"
-  import { database } from "stores/backend"
   import { automationStore } from "builderStore"
   import { notifications } from "@budibase/bbui"
   import {
@@ -10,49 +8,37 @@
     Layout,
     Body,
     Icon,
+    Label,
   } from "@budibase/bbui"
-  import analytics, { Events } from "analytics"
+  import { TriggerStepID } from "constants/backend/automations"
+
+  export let webhookModal
 
   let name
   let selectedTrigger
   let nameTouched = false
   let triggerVal
-  export let webhookModal
 
-  $: instanceId = $database._id
   $: nameError =
     nameTouched && !name ? "Please specify a name for the automation." : null
+  $: triggers = Object.entries($automationStore.blockDefinitions.TRIGGER)
 
   async function createAutomation() {
     try {
-      await automationStore.actions.create({
-        name,
-        instanceId,
-      })
-      const newBlock = $automationStore.selectedAutomation.constructBlock(
+      const trigger = automationStore.actions.constructBlock(
         "TRIGGER",
         triggerVal.stepId,
         triggerVal
       )
-
-      automationStore.actions.addBlockToAutomation(newBlock)
-      if (triggerVal.stepId === "WEBHOOK") {
-        webhookModal.show
+      await automationStore.actions.create(name, trigger)
+      if (triggerVal.stepId === TriggerStepID.WEBHOOK) {
+        webhookModal.show()
       }
-
-      await automationStore.actions.save(
-        $automationStore.selectedAutomation?.automation
-      )
-
       notifications.success(`Automation ${name} created`)
-
-      $goto(`./${$automationStore.selectedAutomation.automation._id}`)
-      analytics.captureEvent(Events.AUTOMATION.CREATED, { name })
     } catch (error) {
       notifications.error("Error creating automation")
     }
   }
-  $: triggers = Object.entries($automationStore.blockDefinitions.TRIGGER)
 
   const selectTrigger = trigger => {
     triggerVal = trigger
@@ -71,22 +57,21 @@
     header="You must publish your app to activate your automations."
     message="To test your automation before publishing, you can use the 'Run Test' functionality on the next screen."
   />
-  <Body size="XS"
-    >Please name your automation, then select a trigger. Every automation must
-    start with a trigger.
+  <Body size="S">
+    Please name your automation, then select a trigger.<br />
+    Every automation must start with a trigger.
   </Body>
   <Input
     bind:value={name}
-    on:change={() => (nameTouched = true)}
+    on:input={() => (nameTouched = true)}
     bind:error={nameError}
     label="Name"
   />
 
-  <Layout noPadding>
-    <Body size="S">Triggers</Body>
-
+  <Layout noPadding gap="XS">
+    <Label size="S">Trigger</Label>
     <div class="item-list">
-      {#each triggers as [idx, trigger]}
+      {#each triggers as [_, trigger]}
         <div
           class="item"
           class:selected={selectedTrigger === trigger.name}
@@ -125,10 +110,13 @@
     padding: var(--spectrum-alias-item-padding-s);
     background: var(--spectrum-alias-background-color-secondary);
     transition: 0.3s all;
-    border: solid var(--spectrum-alias-border-color);
     border-radius: 5px;
     box-sizing: border-box;
     border-width: 2px;
+  }
+
+  .item:hover {
+    background: var(--spectrum-alias-background-color-tertiary);
   }
   .selected {
     background: var(--spectrum-alias-background-color-tertiary);

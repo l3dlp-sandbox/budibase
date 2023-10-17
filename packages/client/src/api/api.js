@@ -1,5 +1,6 @@
 import { createAPIClient } from "@budibase/frontend-core"
-import { notificationStore, authStore } from "../stores"
+import { authStore } from "../stores/auth.js"
+import { notificationStore, devToolsEnabled, devToolsStore } from "../stores/"
 import { get } from "svelte/store"
 
 export const API = createAPIClient({
@@ -21,13 +22,26 @@ export const API = createAPIClient({
     if (auth?.csrfToken) {
       headers["x-csrf-token"] = auth.csrfToken
     }
+
+    // Add role header
+    const $devToolsStore = get(devToolsStore)
+    const $devToolsEnabled = get(devToolsEnabled)
+    if ($devToolsEnabled && $devToolsStore.role) {
+      headers["x-budibase-role"] = $devToolsStore.role
+    }
   },
 
   // Show an error notification for all API failures.
   // We could also log these to sentry.
   // Or we could check error.status and redirect to login on a 403 etc.
   onError: error => {
-    const { status, method, url, message, handled } = error || {}
+    const { status, method, url, message, handled, suppressErrors } =
+      error || {}
+    const ignoreErrorUrls = [
+      "bbtel",
+      "/api/global/self",
+      "/api/tables/ta_users",
+    ]
 
     // Log any errors that we haven't manually handled
     if (!handled) {
@@ -36,11 +50,27 @@ export const API = createAPIClient({
     }
 
     // Notify all errors
-    if (message) {
+    if (message && !suppressErrors) {
       // Don't notify if the URL contains the word analytics as it may be
       // blocked by browser extensions
-      if (!url?.includes("analytics")) {
-        notificationStore.actions.error(message)
+      let ignore = false
+      for (let ignoreUrl of ignoreErrorUrls) {
+        if (url?.includes(ignoreUrl)) {
+          ignore = true
+          break
+        }
+      }
+      if (!ignore) {
+        const validationErrors = error?.json?.validationErrors
+        if (validationErrors) {
+          for (let field in validationErrors) {
+            notificationStore.actions.error(
+              `${field} ${validationErrors[field]}`
+            )
+          }
+        } else {
+          notificationStore.actions.error(message)
+        }
       }
     }
 

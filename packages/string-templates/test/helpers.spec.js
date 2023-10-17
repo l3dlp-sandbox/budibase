@@ -48,14 +48,6 @@ describe("test the math helpers", () => {
     })
     expect(parseInt(output)).toBe(2)
   })
-
-  it("should be able to times", async () => {
-    const output = await processString("{{times a b}}", {
-      a: 5,
-      b: 5,
-    })
-    expect(parseInt(output)).toBe(25)
-  })
 })
 
 describe("test the array helpers", () => {
@@ -272,6 +264,14 @@ describe("test the string helpers", () => {
     )
     expect(output).toBe("Hi!")
   })
+
+  it("should allow use of the ellipsis helper", async () => {
+    const output = await processString(
+      "{{ ellipsis \"adfasdfasdfasf\" 7 }}",
+      {},
+    )
+    expect(output).toBe("adfasdf…")
+  })
 })
 
 describe("test the comparison helpers", () => {
@@ -357,6 +357,13 @@ describe("Test the literal helper", () => {
       a: { b: "i-have-dashes" },
     })
     expect(output.b).toBe("i-have-dashes")
+  })
+})
+
+describe("Test that JSONpase helper", () => {
+  it("should state that the JSONparse helper is valid", async () => {
+    const output = isValid(`{{ JSONparse input }}`)
+    expect(output).toBe(true)
   })
 })
 

@@ -15,9 +15,12 @@
   export let value = []
   export let id = null
   export let disabled = false
+  export let compact = false
   export let fileSizeLimit = BYTES_IN_MB * 20
   export let processFiles = null
+  export let deleteAttachments = null
   export let handleFileTooLarge = null
+  export let handleTooManyFiles = null
   export let gallery = true
   export let error = null
   export let fileTags = []
@@ -41,6 +44,7 @@
   let selectedImageIdx = 0
   let fileDragged = false
   let selectedUrl
+  let fileInput
   $: selectedImage = value?.[selectedImageIdx] ?? null
   $: fileCount = value?.length ?? 0
   $: isImage =
@@ -63,6 +67,9 @@
     }
   }
 
+  $: showDropzone =
+    (!maximum || (maximum && value?.length < maximum)) && !disabled
+
   async function processFileList(fileList) {
     if (
       handleFileTooLarge &&
@@ -71,6 +78,13 @@
       handleFileTooLarge(fileSizeLimit, value)
       return
     }
+
+    const fileCount = fileList.length + value.length
+    if (handleTooManyFiles && maximum && fileCount > maximum) {
+      handleTooManyFiles(maximum)
+      return
+    }
+
     if (processFiles) {
       const processedFiles = await processFiles(fileList)
       const newValue = [...value, ...processedFiles]
@@ -86,6 +100,12 @@
       "change",
       value.filter((x, idx) => idx !== selectedImageIdx)
     )
+    if (deleteAttachments) {
+      await deleteAttachments(
+        value.filter((x, idx) => idx === selectedImageIdx).map(item => item.key)
+      )
+      fileInput.value = ""
+    }
     selectedImageIdx = 0
   }
 
@@ -118,14 +138,20 @@
   }
 </script>
 
-<div class="container">
+<div class="container" class:compact>
   {#if selectedImage}
     {#if gallery}
       <div class="gallery">
         <div class="title">
           <div class="filename">
             {#if selectedUrl}
-              <Link href={selectedUrl}>{selectedImage.name}</Link>
+              <Link
+                target="_blank"
+                download={selectedImage.name}
+                href={selectedUrl}
+              >
+                {selectedImage.name}
+              </Link>
             {:else}
               {selectedImage.name}
             {/if}
@@ -139,7 +165,7 @@
           {/if}
           {#if !disabled}
             <div class="delete-button" on:click={removeFile}>
-              <Icon name="Close" />
+              <Icon name="Delete" />
             </div>
           {/if}
         </div>
@@ -183,7 +209,7 @@
             {/if}
             {#if !disabled}
               <div class="delete-button" on:click={removeFile}>
-                <Icon name="Close" />
+                <Icon name="Delete" />
               </div>
             {/if}
           </div>
@@ -191,7 +217,7 @@
       {/each}
     {/if}
   {/if}
-  {#if !maximum || (maximum && value?.length < maximum)}
+  {#if showDropzone}
     <div
       class="spectrum-Dropzone"
       class:is-invalid={!!error}
@@ -211,72 +237,75 @@
           type="file"
           multiple
           accept={extensions}
+          bind:this={fileInput}
           on:change={handleFile}
         />
-        <svg
-          class="spectrum-IllustratedMessage-illustration"
-          width="125"
-          height="60"
-          viewBox="0 0 199 97.7"
-        >
-          <defs>
-            <style>
-              .cls-1,
-              .cls-2 {
-                fill: none;
-                stroke-linecap: round;
-                stroke-linejoin: round;
-              }
-              .cls-1 {
-                stroke-width: 3px;
-              }
-              .cls-2 {
-                stroke-width: 2px;
-              }
-            </style>
-          </defs>
-          <path
-            class="cls-1"
-            d="M110.53,85.66,100.26,95.89a1.09,1.09,0,0,1-1.52,0L88.47,85.66"
-          />
-          <line class="cls-1" x1="99.5" y1="95.5" x2="99.5" y2="58.5" />
-          <path class="cls-1" d="M105.5,73.5h19a2,2,0,0,0,2-2v-43" />
-          <path
-            class="cls-1"
-            d="M126.5,22.5h-19a2,2,0,0,1-2-2V1.5h-31a2,2,0,0,0-2,2v68a2,2,0,0,0,2,2h19"
-          />
-          <line class="cls-1" x1="105.5" y1="1.5" x2="126.5" y2="22.5" />
-          <path
-            class="cls-2"
-            d="M47.93,50.49a5,5,0,1,0-4.83-5A4.93,4.93,0,0,0,47.93,50.49Z"
-          />
-          <path
-            class="cls-2"
-            d="M36.6,65.93,42.05,60A2.06,2.06,0,0,1,45,60l12.68,13.2"
-          />
-          <path
-            class="cls-2"
-            d="M3.14,73.23,22.42,53.76a1.65,1.65,0,0,1,2.38,0l19.05,19.7"
-          />
-          <path
-            class="cls-1"
-            d="M139.5,36.5H196A1.49,1.49,0,0,1,197.5,38V72A1.49,1.49,0,0,1,196,73.5H141A1.49,1.49,0,0,1,139.5,72V32A1.49,1.49,0,0,1,141,30.5H154a2.43,2.43,0,0,1,1.67.66l6,5.66"
-          />
-          <rect
-            class="cls-1"
-            x="1.5"
-            y="34.5"
-            width="58"
-            height="39"
-            rx="2"
-            ry="2"
-          />
-        </svg>
-        <h2
-          class="spectrum-Heading spectrum-Heading--sizeL spectrum-Heading--light spectrum-IllustratedMessage-heading"
-        >
-          Drag and drop your file
-        </h2>
+        {#if !compact}
+          <svg
+            class="spectrum-IllustratedMessage-illustration"
+            width="125"
+            height="60"
+            viewBox="0 0 199 97.7"
+          >
+            <defs>
+              <style>
+                .cls-1,
+                .cls-2 {
+                  fill: none;
+                  stroke-linecap: round;
+                  stroke-linejoin: round;
+                }
+                .cls-1 {
+                  stroke-width: 3px;
+                }
+                .cls-2 {
+                  stroke-width: 2px;
+                }
+              </style>
+            </defs>
+            <path
+              class="cls-1"
+              d="M110.53,85.66,100.26,95.89a1.09,1.09,0,0,1-1.52,0L88.47,85.66"
+            />
+            <line class="cls-1" x1="99.5" y1="95.5" x2="99.5" y2="58.5" />
+            <path class="cls-1" d="M105.5,73.5h19a2,2,0,0,0,2-2v-43" />
+            <path
+              class="cls-1"
+              d="M126.5,22.5h-19a2,2,0,0,1-2-2V1.5h-31a2,2,0,0,0-2,2v68a2,2,0,0,0,2,2h19"
+            />
+            <line class="cls-1" x1="105.5" y1="1.5" x2="126.5" y2="22.5" />
+            <path
+              class="cls-2"
+              d="M47.93,50.49a5,5,0,1,0-4.83-5A4.93,4.93,0,0,0,47.93,50.49Z"
+            />
+            <path
+              class="cls-2"
+              d="M36.6,65.93,42.05,60A2.06,2.06,0,0,1,45,60l12.68,13.2"
+            />
+            <path
+              class="cls-2"
+              d="M3.14,73.23,22.42,53.76a1.65,1.65,0,0,1,2.38,0l19.05,19.7"
+            />
+            <path
+              class="cls-1"
+              d="M139.5,36.5H196A1.49,1.49,0,0,1,197.5,38V72A1.49,1.49,0,0,1,196,73.5H141A1.49,1.49,0,0,1,139.5,72V32A1.49,1.49,0,0,1,141,30.5H154a2.43,2.43,0,0,1,1.67.66l6,5.66"
+            />
+            <rect
+              class="cls-1"
+              x="1.5"
+              y="34.5"
+              width="58"
+              height="39"
+              rx="2"
+              ry="2"
+            />
+          </svg>
+          <h2
+            class="spectrum-Heading spectrum-Heading--sizeL spectrum-Heading--light spectrum-IllustratedMessage-heading"
+          >
+            Drag and drop your file
+          </h2>
+        {/if}
         {#if !disabled}
           <p
             class="spectrum-Body spectrum-Body--sizeS spectrum-IllustratedMessage-description"
@@ -284,8 +313,10 @@
             <label for={fieldId} class="spectrum-Link">
               Select a file to upload
             </label>
-            <br />
-            from your computer
+            {#if !compact}
+              <br />
+              from your computer
+            {/if}
           </p>
           {#if fileTags.length}
             <Tags>
@@ -324,6 +355,9 @@
   input[type="file"] {
     display: none;
   }
+  .compact .spectrum-Dropzone {
+    padding: 6px 0 !important;
+  }
 
   .gallery {
     display: flex;
@@ -347,6 +381,17 @@
     max-width: 100%;
     object-fit: contain;
     margin: 20px 30px;
+  }
+  .compact .placeholder,
+  .compact img {
+    margin: 10px 16px;
+  }
+  .compact img {
+    height: 90px;
+  }
+  .compact .gallery {
+    padding: 6px 10px;
+    margin-bottom: 8px;
   }
   .title {
     display: flex;
@@ -415,6 +460,13 @@
   }
   .disabled .spectrum-Heading--sizeL {
     color: var(--spectrum-alias-text-color-disabled);
+  }
+  .compact .spectrum-Dropzone {
+    padding-top: 8px;
+    padding-bottom: 8px;
+  }
+  .compact .spectrum-IllustratedMessage-description {
+    margin: 0;
   }
 
   .tags {

@@ -1,5 +1,5 @@
 <script>
-  import CopyInput from "components/common/inputs/CopyInput.svelte"
+  import { CopyInput } from "@budibase/bbui"
 
   export let value
 
@@ -12,4 +12,4 @@
   }
 </script>
 
-<CopyInput {value} copyValue={fullWebhookURL(value)} />
+<CopyInput value={fullWebhookURL(value)} />

@@ -1,14 +1,5 @@
 export const buildOtherEndpoints = API => ({
   /**
-   * TODO: find out what this is
-   */
-  checkImportComplete: async () => {
-    return await API.get({
-      url: "/api/cloud/import/complete",
-    })
-  },
-
-  /**
    * Gets the current environment details.
    */
   getEnvironment: async () => {
@@ -52,6 +43,16 @@ export const buildOtherEndpoints = API => ({
   getBasePermissions: async () => {
     return await API.get({
       url: "/api/permission/builtin",
+    })
+  },
+
+  /**
+   * Check if they are part of the budibase beta program.
+   */
+  checkBetaAccess: async email => {
+    return await API.get({
+      url: `/api/beta/access?email=${email}`,
+      external: true,
     })
   },
 })

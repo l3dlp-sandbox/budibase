@@ -1,11 +1,10 @@
 import { writable, derived, get } from "svelte/store"
 import { cloneDeep } from "lodash/fp"
-import {
-  buildLuceneQuery,
-  luceneLimit,
-  runLuceneQuery,
-  luceneSort,
-} from "../utils/lucene"
+import { LuceneUtils } from "../utils"
+import { convertJSONSchemaToTableSchema } from "../utils/json"
+
+const { buildLuceneQuery, luceneLimit, runLuceneQuery, luceneSort } =
+  LuceneUtils
 
 /**
  * Parent class which handles the implementation of fetching data from an
@@ -13,52 +12,54 @@ import {
  * For other types of datasource, this class is overridden and extended.
  */
 export default class DataFetch {
-  // API client
-  API = null
-
-  // Feature flags
-  featureStore = writable({
-    supportsSearch: false,
-    supportsSort: false,
-    supportsPagination: false,
-  })
-
-  // Config
-  options = {
-    datasource: null,
-    limit: 10,
-
-    // Search config
-    filter: null,
-    query: null,
-
-    // Sorting config
-    sortColumn: null,
-    sortOrder: "ascending",
-    sortType: null,
-
-    // Pagination config
-    paginate: true,
-  }
-
-  // State of the fetch
-  store = writable({
-    rows: [],
-    info: null,
-    schema: null,
-    loading: false,
-    loaded: false,
-    query: null,
-    pageNumber: 0,
-    cursor: null,
-    cursors: [],
-  })
-
   /**
    * Constructs a new DataFetch instance.
    * @param opts the fetch options
    */
   constructor(opts) {
+    // API client
+    this.API = null
+
+    // Feature flags
+    this.features = {
+      supportsSearch: false,
+      supportsSort: false,
+      supportsPagination: false,
+    }
+
+    // Config
+    this.options = {
+      datasource: null,
+      limit: 10,
+
+      // Search config
+      filter: null,
+      query: null,
+
+      // Sorting config
+      sortColumn: null,
+      sortOrder: "ascending",
+      sortType: null,
+
+      // Pagination config
+      paginate: true,
+    }
+
+    // State of the fetch
+    this.store = writable({
+      rows: [],
+      info: null,
+      schema: null,
+      loading: false,
+      loaded: false,
+      query: null,
+      pageNumber: 0,
+      cursor: null,
+      cursors: [],
+      resetKey: Math.random(),
+      error: null,
+    })
+
     // Merge options with their default values
     this.API = opts?.API
     this.options = {
@@ -82,17 +83,14 @@ export default class DataFetch {
     this.prevPage = this.prevPage.bind(this)
 
     // Derive certain properties to return
-    this.derivedStore = derived(
-      [this.store, this.featureStore],
-      ([$store, $featureStore]) => {
-        return {
-          ...$store,
-          ...$featureStore,
-          hasNextPage: this.hasNextPage($store),
-          hasPrevPage: this.hasPrevPage($store),
-        }
+    this.derivedStore = derived(this.store, $store => {
+      return {
+        ...$store,
+        ...this.features,
+        hasNextPage: this.hasNextPage($store),
+        hasPrevPage: this.hasPrevPage($store),
       }
-    )
+    })
 
     // Mark as loaded if we have no datasource
     if (!this.options.datasource) {
@@ -113,19 +111,32 @@ export default class DataFetch {
   }
 
   /**
+   * Gets the default sort column for this datasource
+   */
+  getDefaultSortColumn(definition, schema) {
+    if (definition?.primaryDisplay && schema[definition.primaryDisplay]) {
+      return definition.primaryDisplay
+    } else {
+      return Object.keys(schema)[0]
+    }
+  }
+
+  /**
    * Fetches a fresh set of data from the server, resetting pagination
    */
   async getInitialData() {
-    const { datasource, filter, sortColumn, paginate } = this.options
+    const { datasource, filter, paginate } = this.options
 
-    // Fetch datasource definition and determine feature flags
+    // Fetch datasource definition and extract sort properties if configured
     const definition = await this.getDefinition(datasource)
+
+    // Determine feature flags
     const features = this.determineFeatureFlags(definition)
-    this.featureStore.set({
+    this.features = {
       supportsSearch: !!features?.supportsSearch,
       supportsSort: !!features?.supportsSort,
       supportsPagination: paginate && !!features?.supportsPagination,
-    })
+    }
 
     // Fetch and enrich schema
     let schema = this.getSchema(datasource, definition)
@@ -134,14 +145,31 @@ export default class DataFetch {
       return
     }
 
-    // Determine what sort type to use
-    if (!this.options.sortType) {
-      let sortType = "string"
-      if (sortColumn) {
-        const type = schema?.[sortColumn]?.type
-        sortType = type === "number" ? "number" : "string"
+    // If an invalid sort column is specified, delete it
+    if (this.options.sortColumn && !schema[this.options.sortColumn]) {
+      this.options.sortColumn = null
+    }
+
+    // If no sort column, get the default column for this datasource
+    if (!this.options.sortColumn) {
+      this.options.sortColumn = this.getDefaultSortColumn(definition, schema)
+    }
+
+    // If we don't have a sort column specified then just ensure we don't set
+    // any sorting params
+    if (!this.options.sortColumn) {
+      this.options.sortOrder = "ascending"
+      this.options.sortType = null
+    } else {
+      // Otherwise determine what sort type to use base on sort column
+      const type = schema?.[this.options.sortColumn]?.type
+      this.options.sortType =
+        type === "number" || type === "bigint" ? "number" : "string"
+
+      // If no sort order, default to ascending
+      if (!this.options.sortOrder) {
+        this.options.sortOrder = "ascending"
       }
-      this.options.sortType = sortType
     }
 
     // Build the lucene query
@@ -157,6 +185,8 @@ export default class DataFetch {
       schema,
       query,
       loading: true,
+      cursors: [],
+      cursor: null,
     }))
 
     // Actually fetch data
@@ -169,6 +199,8 @@ export default class DataFetch {
       rows: page.rows,
       info: page.info,
       cursors: paginate && page.hasNextPage ? [null, page.cursor] : [null],
+      error: page.error,
+      resetKey: Math.random(),
     }))
   }
 
@@ -178,23 +210,22 @@ export default class DataFetch {
   async getPage() {
     const { sortColumn, sortOrder, sortType, limit } = this.options
     const { query } = get(this.store)
-    const features = get(this.featureStore)
 
     // Get the actual data
-    let { rows, info, hasNextPage, cursor } = await this.getData()
+    let { rows, info, hasNextPage, cursor, error } = await this.getData()
 
     // If we don't support searching, do a client search
-    if (!features.supportsSearch) {
+    if (!this.features.supportsSearch) {
       rows = runLuceneQuery(rows, query)
     }
 
     // If we don't support sorting, do a client-side sort
-    if (!features.supportsSort) {
+    if (!this.features.supportsSort) {
       rows = luceneSort(rows, sortColumn, sortOrder, sortType)
     }
 
     // If we don't support pagination, do a client-side limit
-    if (!features.supportsPagination) {
+    if (!this.features.supportsPagination) {
       rows = luceneLimit(rows, limit)
     }
 
@@ -203,6 +234,7 @@ export default class DataFetch {
       info,
       hasNextPage,
       cursor,
+      error,
     }
   }
 
@@ -232,6 +264,10 @@ export default class DataFetch {
     try {
       return await this.API.fetchTableDefinition(datasource.tableId)
     } catch (error) {
+      this.store.update(state => ({
+        ...state,
+        error,
+      }))
       return null
     }
   }
@@ -248,7 +284,8 @@ export default class DataFetch {
   }
 
   /**
-   * Enriches the schema and ensures that entries are objects with names
+   * Enriches a datasource schema with nested fields and ensures the structure
+   * is correct.
    * @param schema the datasource schema
    * @return {object} the enriched datasource schema
    */
@@ -256,6 +293,26 @@ export default class DataFetch {
     if (schema == null) {
       return null
     }
+
+    // Check for any JSON fields so we can add any top level properties
+    let jsonAdditions = {}
+    Object.keys(schema).forEach(fieldKey => {
+      const fieldSchema = schema[fieldKey]
+      if (fieldSchema?.type === "json") {
+        const jsonSchema = convertJSONSchemaToTableSchema(fieldSchema, {
+          squashObjects: true,
+        })
+        Object.keys(jsonSchema).forEach(jsonKey => {
+          jsonAdditions[`${fieldKey}.${jsonKey}`] = {
+            type: jsonSchema[jsonKey].type,
+            nestedJSON: true,
+          }
+        })
+      }
+    })
+    schema = { ...schema, ...jsonAdditions }
+
+    // Ensure schema is in the correct structure
     let enrichedSchema = {}
     Object.entries(schema).forEach(([fieldName, fieldSchema]) => {
       if (typeof fieldSchema === "string") {
@@ -270,6 +327,7 @@ export default class DataFetch {
         }
       }
     })
+
     return enrichedSchema
   }
 
@@ -322,8 +380,36 @@ export default class DataFetch {
       return
     }
     this.store.update($store => ({ ...$store, loading: true }))
-    const { rows, info } = await this.getPage()
-    this.store.update($store => ({ ...$store, rows, info, loading: false }))
+    const { rows, info, error, cursor } = await this.getPage()
+
+    let { cursors } = get(this.store)
+    const { pageNumber } = get(this.store)
+
+    if (!rows.length && pageNumber > 0) {
+      // If the full page is gone but we have previous pages, navigate to the previous page
+      this.store.update($store => ({
+        ...$store,
+        loading: false,
+        cursors: cursors.slice(0, pageNumber),
+      }))
+      return await this.prevPage()
+    }
+
+    const currentNextCursor = cursors[pageNumber + 1]
+    if (currentNextCursor != cursor) {
+      // If the current cursor changed, all the next pages need to be updated, so we mark them as stale
+      cursors = cursors.slice(0, pageNumber + 1)
+      cursors[pageNumber + 1] = cursor
+    }
+
+    this.store.update($store => ({
+      ...$store,
+      rows,
+      info,
+      loading: false,
+      error,
+      cursors,
+    }))
   }
 
   /**
@@ -363,7 +449,7 @@ export default class DataFetch {
       cursor: nextCursor,
       pageNumber: $store.pageNumber + 1,
     }))
-    const { rows, info, hasNextPage, cursor } = await this.getPage()
+    const { rows, info, hasNextPage, cursor, error } = await this.getPage()
 
     // Update state
     this.store.update($store => {
@@ -377,6 +463,7 @@ export default class DataFetch {
         info,
         cursors,
         loading: false,
+        error,
       }
     })
   }
@@ -398,7 +485,7 @@ export default class DataFetch {
       cursor: prevCursor,
       pageNumber: $store.pageNumber - 1,
     }))
-    const { rows, info } = await this.getPage()
+    const { rows, info, error } = await this.getPage()
 
     // Update state
     this.store.update($store => {
@@ -407,6 +494,7 @@ export default class DataFetch {
         rows,
         info,
         loading: false,
+        error,
       }
     })
   }

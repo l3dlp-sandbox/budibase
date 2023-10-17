@@ -8,34 +8,51 @@ export const buildRowEndpoints = API => ({
     if (!tableId || !rowId) {
       return null
     }
-    const row = await API.get({
+    return await API.get({
       url: `/api/${tableId}/rows/${rowId}`,
     })
-    return (await API.enrichRows([row], tableId))[0]
   },
 
   /**
    * Creates or updates a row in a table.
    * @param row the row to save
+   * @param suppressErrors whether or not to suppress error notifications
    */
-  saveRow: async row => {
+  saveRow: async (row, suppressErrors = false) => {
     if (!row?.tableId) {
       return
     }
     return await API.post({
-      url: `/api/${row.tableId}/rows`,
+      url: `/api/${row._viewId || row.tableId}/rows`,
       body: row,
+      suppressErrors,
+    })
+  },
+
+  /**
+   * Patches a row in a table.
+   * @param row the row to patch
+   * @param suppressErrors whether or not to suppress error notifications
+   */
+  patchRow: async (row, suppressErrors = false) => {
+    if (!row?.tableId && !row?._viewId) {
+      return
+    }
+    return await API.patch({
+      url: `/api/${row._viewId || row.tableId}/rows`,
+      body: row,
+      suppressErrors,
     })
   },
 
   /**
    * Deletes a row from a table.
-   * @param tableId the ID of the table to delete from
+   * @param tableId the ID of the table or view to delete from
    * @param rowId the ID of the row to delete
    * @param revId the rev of the row to delete
    */
   deleteRow: async ({ tableId, rowId, revId }) => {
-    if (!tableId || !rowId || !revId) {
+    if (!tableId || !rowId) {
       return
     }
     return await API.delete({
@@ -49,10 +66,13 @@ export const buildRowEndpoints = API => ({
 
   /**
    * Deletes multiple rows from a table.
-   * @param tableId the table ID to delete the rows from
+   * @param tableId the table or view ID to delete the rows from
    * @param rows the array of rows to delete
    */
   deleteRows: async ({ tableId, rows }) => {
+    rows?.forEach(row => {
+      delete row?._viewId
+    })
     return await API.delete({
       url: `/api/${tableId}/rows`,
       body: {
@@ -65,12 +85,16 @@ export const buildRowEndpoints = API => ({
    * Exports rows.
    * @param tableId the table ID to export the rows from
    * @param rows the array of rows to export
+   * @param format the format to export (csv or json)
+   * @param columns which columns to export (all if undefined)
    */
-  exportRows: async ({ tableId, rows, format }) => {
+  exportRows: async ({ tableId, rows, format, columns, search }) => {
     return await API.post({
       url: `/api/${tableId}/rows/exportRows?format=${format}`,
       body: {
         rows,
+        columns,
+        ...search,
       },
       parseResponse: async response => {
         return await response.text()

@@ -106,6 +106,16 @@ describe("Test that the object processing works correctly", () => {
   })
 })
 
+describe("check returning objects", () => {
+  it("should handle an array of objects", async () => {
+    const json = [{a: 1},{a: 2}]
+    const output = await processString("{{ testing }}", {
+      testing: json
+    })
+    expect(output).toEqual(JSON.stringify(json))
+  })
+})
+
 describe("check the utility functions", () => {
   it("should return false for an invalid template string", () => {
     const valid = isValid("{{ table1.thing prop }}")
@@ -211,3 +221,9 @@ describe("check find hbs blocks function", () => {
   })
 })
 
+describe("should leave HBS blocks if not found using option", () => {
+  it("should replace one, leave one", async () => {
+    const output = await processString("{{ a }}, {{ b }}", { b: 1 }, { onlyFound: true })
+    expect(output).toBe("{{ a }}, 1")
+  })
+})

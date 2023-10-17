@@ -1,23 +1,9 @@
 {
+  "extends": "./tsconfig.build.json",
   "compilerOptions": {
-    "target": "es6",
-    "module": "commonjs",
-    "lib": ["es2019"],
-    "allowJs": true,
-    "outDir": "dist",
-    "strict": true,
-    "noImplicitAny": true,
-    "esModuleInterop": true,
-    "resolveJsonModule": true,
-    "incremental": true
+    "composite": true,
+    "baseUrl": "."
   },
-  "include": [
-    "./src/**/*"
-  ],
-  "exclude": [
-    "node_modules",
-    "**/*.json",
-    "**/*.spec.ts",
-    "**/*.spec.js"
-  ]
+  "include": ["src/**/*", "__mocks__/**/*"],
+  "exclude": ["node_modules", "dist"]
 }
