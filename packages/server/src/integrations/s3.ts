@@ -24,27 +24,29 @@ const SCHEMA: Integration = {
     "Amazon Simple Storage Service (Amazon S3) is an object storage service that offers industry-leading scalability, data availability, security, and performance.",
   friendlyName: "Amazon S3",
   type: "Object store",
-  features: [DatasourceFeature.CONNECTION_CHECKING],
+  features: {
+    [DatasourceFeature.CONNECTION_CHECKING]: true,
+  },
   datasource: {
     region: {
-      type: "string",
+      type: DatasourceFieldType.STRING,
       required: false,
       default: "us-east-1",
     },
     accessKeyId: {
-      type: "password",
+      type: DatasourceFieldType.PASSWORD,
       required: true,
     },
     secretAccessKey: {
-      type: "password",
+      type: DatasourceFieldType.PASSWORD,
       required: true,
     },
     endpoint: {
-      type: "string",
+      type: DatasourceFieldType.STRING,
       required: false,
     },
     signatureVersion: {
-      type: "string",
+      type: DatasourceFieldType.STRING,
       required: false,
       default: "v4",
     },

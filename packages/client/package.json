@@ -1,6 +1,6 @@
 {
   "name": "@budibase/client",
-  "version": "0.0.1",
+  "version": "0.0.0",
   "license": "MPL-2.0",
   "module": "dist/budibase-client.js",
   "main": "dist/budibase-client.js",
@@ -19,11 +19,11 @@
     "dev:builder": "rollup -cw"
   },
   "dependencies": {
-    "@budibase/bbui": "0.0.1",
-    "@budibase/frontend-core": "0.0.1",
-    "@budibase/shared-core": "0.0.1",
-    "@budibase/string-templates": "0.0.1",
-    "@budibase/types": "0.0.1",
+    "@budibase/bbui": "0.0.0",
+    "@budibase/frontend-core": "0.0.0",
+    "@budibase/shared-core": "0.0.0",
+    "@budibase/string-templates": "0.0.0",
+    "@budibase/types": "0.0.0",
     "@spectrum-css/button": "^3.0.3",
     "@spectrum-css/card": "^3.0.3",
     "@spectrum-css/divider": "^1.0.3",
@@ -33,7 +33,7 @@
     "@spectrum-css/typography": "^3.0.2",
     "@spectrum-css/vars": "^3.0.1",
     "apexcharts": "^3.22.1",
-    "dayjs": "^1.10.5",
+    "dayjs": "^1.10.8",
     "downloadjs": "1.4.7",
     "html5-qrcode": "^2.2.1",
     "leaflet": "^1.7.1",
@@ -41,7 +41,6 @@
     "sanitize-html": "^2.7.0",
     "screenfull": "^6.0.1",
     "shortid": "^2.2.15",
-    "socket.io-client": "^4.5.1",
     "svelte": "^3.49.0",
     "svelte-apexcharts": "^1.0.2",
     "svelte-flatpickr": "^3.1.0",
@@ -65,5 +64,32 @@
   "resolutions": {
     "loader-utils": "1.4.1"
   },
-  "gitHead": "d1836a898cab3f8ab80ee6d8f42be1a9eed7dcdc"
+  "nx": {
+    "targets": {
+      "build": {
+        "dependsOn": [
+          {
+            "projects": [
+              "@budibase/shared-core",
+              "@budibase/string-templates",
+              "@budibase/types"
+            ],
+            "target": "build"
+          }
+        ]
+      },
+      "dev:builder": {
+        "dependsOn": [
+          {
+            "projects": [
+              "@budibase/shared-core",
+              "@budibase/string-templates",
+              "@budibase/types"
+            ],
+            "target": "build"
+          }
+        ]
+      }
+    }
+  }
 }

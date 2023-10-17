@@ -6,6 +6,7 @@ import {
   AutomationStepInput,
   AutomationStepType,
   AutomationIOType,
+  AutomationFeature,
 } from "@budibase/types"
 
 export const definition: AutomationStepSchema = {
@@ -13,6 +14,9 @@ export const definition: AutomationStepSchema = {
   stepId: AutomationActionStepId.zapier,
   type: AutomationStepType.ACTION,
   internal: false,
+  features: {
+    [AutomationFeature.LOOPING]: true,
+  },
   description: "Trigger a Zapier Zap via webhooks",
   tagline: "Trigger a Zapier Zap",
   icon: "ri-flashlight-line",
@@ -67,8 +71,7 @@ export const definition: AutomationStepSchema = {
 }
 
 export async function run({ inputs }: AutomationStepInput) {
-  //TODO - Remove deprecated values 1,2,3,4,5 after November 2023
-  const { url, value1, value2, value3, value4, value5, body } = inputs
+  const { url, body } = inputs
 
   let payload = {}
   try {
@@ -96,11 +99,6 @@ export async function run({ inputs }: AutomationStepInput) {
       method: "post",
       body: JSON.stringify({
         platform: "budibase",
-        value1,
-        value2,
-        value3,
-        value4,
-        value5,
         ...payload,
       }),
       headers: {

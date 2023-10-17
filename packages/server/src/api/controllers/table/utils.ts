@@ -1,6 +1,6 @@
 import { parse, isSchema, isRows } from "../../../utilities/schema"
 import { getRowParams, generateRowID, InternalTables } from "../../../db/utils"
-import { isEqual } from "lodash"
+import isEqual from "lodash/isEqual"
 import {
   AutoFieldSubTypes,
   FieldTypes,
@@ -22,14 +22,14 @@ import { quotas } from "@budibase/pro"
 import { events, context } from "@budibase/backend-core"
 import {
   ContextUser,
-  Database,
   Datasource,
+  Row,
   SourceName,
   Table,
 } from "@budibase/types"
 
 export async function clearColumns(table: any, columnNames: any) {
-  const db: Database = context.getAppDB()
+  const db = context.getAppDB()
   const rows = await db.allDocs(
     getRowParams(table._id, null, {
       include_docs: true,
@@ -105,7 +105,7 @@ export function makeSureTableUpToDate(table: any, tableToSave: any) {
   return tableToSave
 }
 
-export function importToRows(
+export async function importToRows(
   data: any[],
   table: Table,
   user: ContextUser | null = null
@@ -119,7 +119,7 @@ export function importToRows(
 
     // We use a reference to table here and update it after input processing,
     // so that we can auto increment auto IDs in imported data properly
-    const processed = inputProcessing(user, table, row, {
+    const processed = await inputProcessing(user?._id, table, row, {
       noAutoRelationships: true,
     })
     row = processed.row
@@ -149,8 +149,13 @@ export function importToRows(
   return finalData
 }
 
-export async function handleDataImport(user: any, table: any, rows: any) {
-  const schema: unknown = table.schema
+export async function handleDataImport(
+  user: ContextUser,
+  table: Table,
+  rows: Row[],
+  identifierFields: Array<string> = []
+) {
+  const schema = table.schema
 
   if (!rows || !isRows(rows) || !isSchema(schema)) {
     return table
@@ -159,7 +164,33 @@ export async function handleDataImport(user: any, table: any, rows: any) {
   const db = context.getAppDB()
   const data = parse(rows, schema)
 
-  let finalData: any = importToRows(data, table, user)
+  let finalData: any = await importToRows(data, table, user)
+
+  //Set IDs of finalData to match existing row if an update is expected
+  if (identifierFields.length > 0) {
+    const allDocs = await db.allDocs(
+      getRowParams(table._id, null, {
+        include_docs: true,
+      })
+    )
+    allDocs.rows
+      .map(existingRow => existingRow.doc)
+      .forEach((doc: any) => {
+        finalData.forEach((finalItem: any) => {
+          let match = true
+          for (const field of identifierFields) {
+            if (finalItem[field] !== doc[field]) {
+              match = false
+              break
+            }
+          }
+          if (match) {
+            finalItem._id = doc._id
+            finalItem._rev = doc._rev
+          }
+        })
+      })
+  }
 
   await quotas.addRows(finalData.length, () => db.bulkDocs(finalData), {
     tableId: table._id,
@@ -393,17 +424,15 @@ export function areSwitchableTypes(type1: any, type2: any) {
   return false
 }
 
-export function hasTypeChanged(table: any, oldTable: any) {
+export function hasTypeChanged(table: Table, oldTable: Table | undefined) {
   if (!oldTable) {
     return false
   }
-  let key: any
-  let field: any
-  for ([key, field] of Object.entries(oldTable.schema)) {
-    const oldType = field.type
+  for (let [key, field] of Object.entries(oldTable.schema)) {
     if (!table.schema[key]) {
       continue
     }
+    const oldType = field.type
     const newType = table.schema[key].type
     if (oldType !== newType && !areSwitchableTypes(oldType, newType)) {
       return true

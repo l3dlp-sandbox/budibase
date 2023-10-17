@@ -6,13 +6,16 @@ import * as automationUtils from "../automationUtils"
 import {
   AutomationActionStepId,
   AutomationCustomIOType,
+  AutomationFeature,
   AutomationIOType,
   AutomationStepInput,
   AutomationStepSchema,
   AutomationStepType,
+  EmptyFilterOption,
   SearchFilters,
   Table,
 } from "@budibase/types"
+import { db as dbCore } from "@budibase/backend-core"
 
 enum SortOrder {
   ASCENDING = "ascending",
@@ -24,16 +27,6 @@ const SortOrderPretty = {
   [SortOrder.DESCENDING]: "Descending",
 }
 
-enum EmptyFilterOption {
-  RETURN_ALL = "all",
-  RETURN_NONE = "none",
-}
-
-const EmptyFilterOptionPretty = {
-  [EmptyFilterOption.RETURN_ALL]: "Return all table rows",
-  [EmptyFilterOption.RETURN_NONE]: "Return no rows",
-}
-
 export const definition: AutomationStepSchema = {
   description: "Query rows from the database",
   icon: "Search",
@@ -42,6 +35,9 @@ export const definition: AutomationStepSchema = {
   type: AutomationStepType.ACTION,
   stepId: AutomationActionStepId.QUERY_ROWS,
   internal: true,
+  features: {
+    [AutomationFeature.LOOPING]: true,
+  },
   inputs: {},
   schema: {
     inputs: {
@@ -71,12 +67,6 @@ export const definition: AutomationStepSchema = {
           type: AutomationIOType.NUMBER,
           title: "Limit",
           customType: AutomationCustomIOType.QUERY_LIMIT,
-        },
-        onEmptyFilter: {
-          pretty: Object.values(EmptyFilterOptionPretty),
-          enum: Object.values(EmptyFilterOption),
-          type: AutomationIOType.STRING,
-          title: "When Filter Empty",
         },
       },
       required: ["tableId"],
@@ -117,7 +107,11 @@ function typeCoercion(filters: SearchFilters, table: Table) {
     const searchParam = filters[key]
     if (typeof searchParam === "object") {
       for (let [property, value] of Object.entries(searchParam)) {
-        const column = table.schema[property]
+        // We need to strip numerical prefixes here, so that we can look up
+        // the correct field name in the schema
+        const columnName = dbCore.removeKeyNumbering(property)
+        const column = table.schema[columnName]
+
         // convert string inputs
         if (!column || typeof value !== "string") {
           continue

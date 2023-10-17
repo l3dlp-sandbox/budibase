@@ -7,7 +7,6 @@
     Detail,
     Modal,
     Button,
-    Select,
     ActionButton,
     notifications,
     Label,
@@ -17,7 +16,11 @@
   import ActionModal from "./ActionModal.svelte"
   import FlowItemHeader from "./FlowItemHeader.svelte"
   import RoleSelect from "components/design/settings/controls/RoleSelect.svelte"
-  import { ActionStepID, TriggerStepID } from "constants/backend/automations"
+  import {
+    ActionStepID,
+    TriggerStepID,
+    Features,
+  } from "constants/backend/automations"
   import { permissions } from "stores/backend"
 
   export let block
@@ -31,10 +34,10 @@
   let showLooping = false
   let role
 
+  $: collectBlockExists = $selectedAutomation.definition.steps.some(
+    step => step.stepId === ActionStepID.COLLECT
+  )
   $: automationId = $selectedAutomation?._id
-  $: showBindingPicker =
-    block.stepId === ActionStepID.CREATE_ROW ||
-    block.stepId === ActionStepID.UPDATE_ROW
   $: isTrigger = block.type === "TRIGGER"
   $: steps = $selectedAutomation?.definition?.steps ?? []
   $: blockIdx = steps.findIndex(step => step.id === block.id)
@@ -66,14 +69,11 @@
     if (!perms["execute"]) {
       role = "BASIC"
     } else {
-      role = perms["execute"]
+      role = perms["execute"].role
     }
   }
 
   async function removeLooping() {
-    let loopBlock = $selectedAutomation?.definition.steps.find(
-      x => x.blockToLoop === block.id
-    )
     try {
       await automationStore.actions.deleteAutomationBlock(loopBlock)
     } catch (error) {
@@ -82,10 +82,6 @@
   }
 
   async function deleteStep() {
-    let loopBlock = $selectedAutomation?.definition.steps.find(
-      x => x.blockToLoop === block.id
-    )
-
     try {
       if (loopBlock) {
         await automationStore.actions.deleteAutomationBlock(loopBlock)
@@ -94,15 +90,6 @@
     } catch (error) {
       notifications.error("Error saving automation")
     }
-  }
-
-  /**
-   * "rowControl" appears to be the name of the flag used to determine whether
-   * a certain automation block uses values or bindings as inputs
-   */
-  function toggleRowControl(evt) {
-    const rowControl = evt.detail !== "Use values"
-    automationStore.actions.toggleRowControl(block, rowControl)
   }
 
   async function addLooping() {
@@ -161,8 +148,8 @@
               $automationStore.blockDefinitions.ACTION.LOOP.schema.inputs
                 .properties
             )}
-            block={loopBlock}
             {webhookModal}
+            block={loopBlock}
           />
         </Layout>
       </div>
@@ -184,20 +171,10 @@
         {#if !isTrigger}
           <div>
             <div class="block-options">
-              {#if !loopBlock}
+              {#if !loopBlock && (block?.features?.[Features.LOOPING] || !block.features)}
                 <ActionButton on:click={() => addLooping()} icon="Reuse">
                   Add Looping
                 </ActionButton>
-              {/if}
-              {#if showBindingPicker}
-                <Select
-                  on:change={toggleRowControl}
-                  defaultValue="Use values"
-                  autoWidth
-                  value={block.rowControl ? "Use bindings" : "Use values"}
-                  options={["Use values", "Use bindings"]}
-                  placeholder={null}
-                />
               {/if}
               <ActionButton
                 on:click={() => deleteStep()}
@@ -224,20 +201,27 @@
       </Layout>
     </div>
   {/if}
-
-  <Modal bind:this={actionModal} width="30%">
-    <ActionModal {blockIdx} />
-  </Modal>
-
-  <Modal bind:this={webhookModal} width="30%">
-    <CreateWebhookModal />
-  </Modal>
 </div>
-<div class="separator" />
-<Icon on:click={() => actionModal.show()} hoverable name="AddCircle" size="S" />
-{#if isTrigger ? totalBlocks > 1 : blockIdx !== totalBlocks - 2}
+{#if !collectBlockExists || !lastStep}
   <div class="separator" />
+  <Icon
+    on:click={() => actionModal.show()}
+    hoverable
+    name="AddCircle"
+    size="S"
+  />
+  {#if isTrigger ? totalBlocks > 1 : blockIdx !== totalBlocks - 2}
+    <div class="separator" />
+  {/if}
 {/if}
+
+<Modal bind:this={actionModal} width="30%">
+  <ActionModal {lastStep} {blockIdx} />
+</Modal>
+
+<Modal bind:this={webhookModal} width="30%">
+  <CreateWebhookModal />
+</Modal>
 
 <style>
   .delete-padding {

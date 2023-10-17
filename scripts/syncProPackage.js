@@ -2,8 +2,8 @@ const fs = require("fs")
 const path = require("path")
 const { execSync } = require("child_process")
 
-let version = "0.0.1"
-const localPro = fs.existsSync("packages/pro/packages")
+let version = "0.0.0"
+const localPro = fs.existsSync("packages/pro/src")
 if (!localPro) {
   const branchName = execSync("git rev-parse --abbrev-ref HEAD")
     .toString()
@@ -26,14 +26,14 @@ Object.keys(data).forEach(workspace => {
   // Loop through each dependency and update its version in package.json
   const packageJsonPath = path.join(data[workspace].location, "package.json")
   const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, "utf-8"))
-  if (packageJson.version !== "0.0.1") {
+  if (packageJson.version !== "0.0.0") {
     // Don't change if we are not using local versions
     return
   }
 
   let hasChanges = false
 
-  if (packageJson.dependencies["@budibase/pro"]) {
+  if (packageJson.dependencies && packageJson.dependencies["@budibase/pro"]) {
     packageJson.dependencies["@budibase/pro"] = version
     hasChanges = true
   }

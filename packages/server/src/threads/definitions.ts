@@ -1,5 +1,3 @@
-import { EnvironmentVariablesDecrypted } from "@budibase/types"
-
 export type WorkerCallback = (error: any, response?: any) => void
 
 export interface QueryEvent {
@@ -13,6 +11,7 @@ export interface QueryEvent {
   queryId: string
   environmentVariables?: Record<string, string>
   ctx?: any
+  schema?: Record<string, { name?: string; type: string }>
 }
 
 export interface QueryVariable {

@@ -1,6 +1,7 @@
 import {
   ConnectionInfo,
   DatasourceFeature,
+  DatasourceFieldType,
   Integration,
   QueryType,
   SqlQuery,
@@ -22,30 +23,35 @@ const SCHEMA: Integration = {
     "Snowflake is a solution for data warehousing, data lakes, data engineering, data science, data application development, and securely sharing and consuming shared data.",
   friendlyName: "Snowflake",
   type: "Relational",
-  features: [DatasourceFeature.CONNECTION_CHECKING],
+  features: {
+    [DatasourceFeature.CONNECTION_CHECKING]: true,
+  },
   datasource: {
     account: {
-      type: "string",
+      type: DatasourceFieldType.STRING,
       required: true,
     },
     username: {
-      type: "string",
+      type: DatasourceFieldType.STRING,
       required: true,
     },
     password: {
-      type: "password",
+      type: DatasourceFieldType.PASSWORD,
       required: true,
     },
+    role: {
+      type: DatasourceFieldType.STRING,
+    },
     warehouse: {
-      type: "string",
+      type: DatasourceFieldType.STRING,
       required: true,
     },
     database: {
-      type: "string",
+      type: DatasourceFieldType.STRING,
       required: true,
     },
     schema: {
-      type: "string",
+      type: DatasourceFieldType.STRING,
       required: true,
     },
   },

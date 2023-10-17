@@ -1,10 +1,9 @@
 import { Config } from "@jest/types"
 
 import * as fs from "fs"
-const preset = require("ts-jest/jest-preset")
+import { join } from "path"
 
 const baseConfig: Config.InitialProjectOptions = {
-  ...preset,
   preset: "@trendyol/jest-testcontainers",
   setupFiles: ["./src/tests/jestEnv.ts"],
   setupFilesAfterEnv: ["./src/tests/jestSetup.ts"],
@@ -13,6 +12,7 @@ const baseConfig: Config.InitialProjectOptions = {
   },
   moduleNameMapper: {
     "@budibase/backend-core/(.*)": "<rootDir>/../backend-core/$1",
+    "@budibase/shared-core/(.*)": "<rootDir>/../shared-core/$1",
     "@budibase/backend-core": "<rootDir>/../backend-core/src",
     "@budibase/shared-core": "<rootDir>/../shared-core/src",
     "@budibase/types": "<rootDir>/../types/src",
@@ -20,9 +20,8 @@ const baseConfig: Config.InitialProjectOptions = {
 }
 
 // add pro sources if they exist
-if (fs.existsSync("../pro/packages")) {
-  baseConfig.moduleNameMapper!["@budibase/pro"] =
-    "<rootDir>/../pro/packages/pro/src"
+if (fs.existsSync("../pro/src")) {
+  baseConfig.moduleNameMapper!["@budibase/pro"] = "<rootDir>/../pro/src"
 }
 
 const config: Config.InitialOptions = {
@@ -48,5 +47,7 @@ const config: Config.InitialOptions = {
   ],
   coverageReporters: ["lcov", "json", "clover"],
 }
+
+process.env.TOP_LEVEL_PATH = join(__dirname, "..", "..")
 
 export default config

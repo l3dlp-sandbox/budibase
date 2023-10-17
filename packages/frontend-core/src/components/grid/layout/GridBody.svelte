@@ -9,9 +9,10 @@
     renderedRows,
     renderedColumns,
     rowVerticalInversionIndex,
-    config,
     hoveredRowId,
     dispatch,
+    isDragging,
+    config,
   } = getContext("grid")
 
   let body
@@ -34,17 +35,21 @@
 </script>
 
 <div bind:this={body} class="grid-body">
-  <GridScrollWrapper scrollHorizontally scrollVertically wheelInteractive>
+  <GridScrollWrapper scrollHorizontally scrollVertically attachHandlers>
     {#each $renderedRows as row, idx}
-      <GridRow {row} {idx} invertY={idx >= $rowVerticalInversionIndex} />
+      <GridRow
+        {row}
+        top={idx === 0}
+        invertY={idx >= $rowVerticalInversionIndex}
+      />
     {/each}
-    {#if $config.allowAddRows && $renderedColumns.length}
+    {#if $config.canAddRows}
       <div
         class="blank"
         class:highlighted={$hoveredRowId === BlankRowID}
         style="width:{renderColumnsWidth}px"
-        on:mouseenter={() => ($hoveredRowId = BlankRowID)}
-        on:mouseleave={() => ($hoveredRowId = null)}
+        on:mouseenter={$isDragging ? null : () => ($hoveredRowId = BlankRowID)}
+        on:mouseleave={$isDragging ? null : () => ($hoveredRowId = null)}
         on:click={() => dispatch("add-row-inline")}
       />
     {/if}

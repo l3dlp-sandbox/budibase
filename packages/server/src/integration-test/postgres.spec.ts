@@ -10,23 +10,21 @@ import * as setup from "../api/routes/tests/utilities"
 import {
   Datasource,
   FieldType,
-  RelationshipTypes,
+  RelationshipType,
   Row,
-  SourceName,
   Table,
 } from "@budibase/types"
 import _ from "lodash"
 import { generator } from "@budibase/backend-core/tests"
 import { utils } from "@budibase/backend-core"
-import { GenericContainer } from "testcontainers"
+import { databaseTestProviders } from "../integrations/tests/utils"
 
 const config = setup.getConfig()!
 
-jest.setTimeout(30000)
-
 jest.unmock("pg")
+jest.mock("../websockets")
 
-describe("row api - postgres", () => {
+describe("postgres integrations", () => {
   let makeRequest: MakeRequestResponse,
     postgresDatasource: Datasource,
     primaryPostgresTable: Table,
@@ -34,44 +32,22 @@ describe("row api - postgres", () => {
     manyToOneRelationshipInfo: ForeignTableInfo,
     manyToManyRelationshipInfo: ForeignTableInfo
 
-  let host: string
-  let port: number
-
   beforeAll(async () => {
-    const container = await new GenericContainer("postgres")
-      .withExposedPorts(5432)
-      .withEnv("POSTGRES_PASSWORD", "password")
-      .start()
-
-    host = container.getContainerIpAddress()
-    port = container.getMappedPort(5432)
-
     await config.init()
     const apiKey = await config.generateApiKey()
 
     makeRequest = generateMakeRequest(apiKey, true)
+
+    postgresDatasource = await config.api.datasource.create(
+      await databaseTestProviders.postgres.getDsConfig()
+    )
+  })
+
+  afterAll(async () => {
+    await databaseTestProviders.postgres.stopContainer()
   })
 
   beforeEach(async () => {
-    postgresDatasource = await config.createDatasource({
-      datasource: {
-        type: "datasource",
-        source: SourceName.POSTGRES,
-        plus: true,
-        config: {
-          host,
-          port,
-          database: "postgres",
-          user: "postgres",
-          password: "password",
-          schema: "public",
-          ssl: false,
-          rejectUnauthorized: false,
-          ca: false,
-        },
-      },
-    })
-
     async function createAuxTable(prefix: string) {
       return await config.createTable({
         name: `${prefix}_${generator.word({ length: 6 })}`,
@@ -96,17 +72,17 @@ describe("row api - postgres", () => {
     oneToManyRelationshipInfo = {
       table: await createAuxTable("o2m"),
       fieldName: "oneToManyRelation",
-      relationshipType: RelationshipTypes.ONE_TO_MANY,
+      relationshipType: RelationshipType.ONE_TO_MANY,
     }
     manyToOneRelationshipInfo = {
       table: await createAuxTable("m2o"),
       fieldName: "manyToOneRelation",
-      relationshipType: RelationshipTypes.MANY_TO_ONE,
+      relationshipType: RelationshipType.MANY_TO_ONE,
     }
     manyToManyRelationshipInfo = {
       table: await createAuxTable("m2m"),
       fieldName: "manyToManyRelation",
-      relationshipType: RelationshipTypes.MANY_TO_MANY,
+      relationshipType: RelationshipType.MANY_TO_MANY,
     }
 
     primaryPostgresTable = await config.createTable({
@@ -138,8 +114,8 @@ describe("row api - postgres", () => {
           },
           fieldName: oneToManyRelationshipInfo.fieldName,
           name: "oneToManyRelation",
-          relationshipType: RelationshipTypes.ONE_TO_MANY,
-          tableId: oneToManyRelationshipInfo.table._id,
+          relationshipType: RelationshipType.ONE_TO_MANY,
+          tableId: oneToManyRelationshipInfo.table._id!,
           main: true,
         },
         manyToOneRelation: {
@@ -149,8 +125,8 @@ describe("row api - postgres", () => {
           },
           fieldName: manyToOneRelationshipInfo.fieldName,
           name: "manyToOneRelation",
-          relationshipType: RelationshipTypes.MANY_TO_ONE,
-          tableId: manyToOneRelationshipInfo.table._id,
+          relationshipType: RelationshipType.MANY_TO_ONE,
+          tableId: manyToOneRelationshipInfo.table._id!,
           main: true,
         },
         manyToManyRelation: {
@@ -160,8 +136,8 @@ describe("row api - postgres", () => {
           },
           fieldName: manyToManyRelationshipInfo.fieldName,
           name: "manyToManyRelation",
-          relationshipType: RelationshipTypes.MANY_TO_MANY,
-          tableId: manyToManyRelationshipInfo.table._id,
+          relationshipType: RelationshipType.MANY_TO_MANY,
+          tableId: manyToManyRelationshipInfo.table._id!,
           main: true,
         },
       },
@@ -188,12 +164,12 @@ describe("row api - postgres", () => {
   type ForeignTableInfo = {
     table: Table
     fieldName: string
-    relationshipType: RelationshipTypes
+    relationshipType: RelationshipType
   }
 
   type ForeignRowsInfo = {
     row: Row
-    relationshipType: RelationshipTypes
+    relationshipType: RelationshipType
   }
 
   async function createPrimaryRow(opts: {
@@ -206,25 +182,6 @@ describe("row api - postgres", () => {
   }) {
     let { rowData } = opts as any
     let foreignRows: ForeignRowsInfo[] = []
-
-    async function createForeignRow(tableInfo: ForeignTableInfo) {
-      const foreignKey = `fk_${tableInfo.table.name}_${tableInfo.fieldName}`
-
-      const foreignRow = await config.createRow({
-        tableId: tableInfo.table._id,
-        title: generator.name(),
-      })
-
-      rowData = {
-        ...rowData,
-        [foreignKey]: foreignRow.id,
-      }
-      foreignRows.push({
-        row: foreignRow,
-
-        relationshipType: tableInfo.relationshipType,
-      })
-    }
 
     if (opts?.createForeignRows?.createOneToMany) {
       const foreignKey = `fk_${oneToManyRelationshipInfo.table.name}_${oneToManyRelationshipInfo.fieldName}`
@@ -258,7 +215,7 @@ describe("row api - postgres", () => {
       rowData[manyToOneRelationshipInfo.fieldName].push(foreignRow._id)
       foreignRows.push({
         row: foreignRow,
-        relationshipType: RelationshipTypes.MANY_TO_ONE,
+        relationshipType: RelationshipType.MANY_TO_ONE,
       })
     }
 
@@ -276,7 +233,7 @@ describe("row api - postgres", () => {
       rowData[manyToManyRelationshipInfo.fieldName].push(foreignRow._id)
       foreignRows.push({
         row: foreignRow,
-        relationshipType: RelationshipTypes.MANY_TO_MANY,
+        relationshipType: RelationshipType.MANY_TO_MANY,
       })
     }
 
@@ -297,9 +254,18 @@ describe("row api - postgres", () => {
         id: {
           name: "id",
           type: FieldType.AUTO,
+          autocolumn: true,
         },
       },
       sourceId: postgresDatasource._id,
+    })
+  }
+
+  const createRandomTableWithRows = async () => {
+    const tableId = (await createDefaultPgTable())._id!
+    return await config.api.row.save(tableId, {
+      tableId,
+      title: generator.name(),
     })
   }
 
@@ -338,9 +304,9 @@ describe("row api - postgres", () => {
       config: {
         ca: false,
         database: "postgres",
-        host,
+        host: postgresDatasource.config!.host,
         password: "--secret-value--",
-        port,
+        port: postgresDatasource.config!.port,
         rejectUnauthorized: false,
         schema: "public",
         ssl: false,
@@ -382,12 +348,16 @@ describe("row api - postgres", () => {
 
       it("multiple rows can be persisted", async () => {
         const numberOfRows = 10
-        const newRows = Array(numberOfRows).fill(generateRandomPrimaryRowData())
+        const newRows: Row[] = Array(numberOfRows).fill(
+          generateRandomPrimaryRowData()
+        )
 
-        for (const newRow of newRows) {
-          const res = await createRow(primaryPostgresTable._id, newRow)
-          expect(res.status).toBe(200)
-        }
+        await Promise.all(
+          newRows.map(async newRow => {
+            const res = await createRow(primaryPostgresTable._id, newRow)
+            expect(res.status).toBe(200)
+          })
+        )
 
         const persistedRows = await config.getRows(primaryPostgresTable._id!)
         expect(persistedRows).toHaveLength(numberOfRows)
@@ -548,13 +518,19 @@ describe("row api - postgres", () => {
           foreignRows = createdRow.foreignRows
         })
 
-        it("only one to many foreign keys are retrieved", async () => {
+        it("only one to primary keys are retrieved", async () => {
           const res = await getRow(primaryPostgresTable._id, row.id)
 
           expect(res.status).toBe(200)
 
           const one2ManyForeignRows = foreignRows.filter(
-            x => x.relationshipType === RelationshipTypes.ONE_TO_MANY
+            x => x.relationshipType === RelationshipType.ONE_TO_MANY
+          )
+          const many2OneForeignRows = foreignRows.filter(
+            x => x.relationshipType === RelationshipType.MANY_TO_ONE
+          )
+          const many2ManyForeignRows = foreignRows.filter(
+            x => x.relationshipType === RelationshipType.MANY_TO_MANY
           )
           expect(one2ManyForeignRows).toHaveLength(1)
 
@@ -566,9 +542,25 @@ describe("row api - postgres", () => {
             _rev: expect.any(String),
             [`fk_${oneToManyRelationshipInfo.table.name}_${oneToManyRelationshipInfo.fieldName}`]:
               one2ManyForeignRows[0].row.id,
+            [oneToManyRelationshipInfo.fieldName]: expect.arrayContaining(
+              one2ManyForeignRows.map(r => ({
+                _id: r.row._id,
+                primaryDisplay: r.row.title,
+              }))
+            ),
+            [manyToOneRelationshipInfo.fieldName]: expect.arrayContaining(
+              many2OneForeignRows.map(r => ({
+                _id: r.row._id,
+                primaryDisplay: r.row.title,
+              }))
+            ),
+            [manyToManyRelationshipInfo.fieldName]: expect.arrayContaining(
+              many2ManyForeignRows.map(r => ({
+                _id: r.row._id,
+                primaryDisplay: r.row.title,
+              }))
+            ),
           })
-
-          expect(res.body[oneToManyRelationshipInfo.fieldName]).toBeUndefined()
         })
       })
 
@@ -597,9 +589,13 @@ describe("row api - postgres", () => {
             _rev: expect.any(String),
             [`fk_${oneToManyRelationshipInfo.table.name}_${oneToManyRelationshipInfo.fieldName}`]:
               foreignRows[0].row.id,
+            [oneToManyRelationshipInfo.fieldName]: expect.arrayContaining(
+              foreignRows.map(r => ({
+                _id: r.row._id,
+                primaryDisplay: r.row.title,
+              }))
+            ),
           })
-
-          expect(res.body[oneToManyRelationshipInfo.fieldName]).toBeUndefined()
         })
       })
 
@@ -626,9 +622,13 @@ describe("row api - postgres", () => {
             tableId: row.tableId,
             _id: expect.any(String),
             _rev: expect.any(String),
+            [manyToOneRelationshipInfo.fieldName]: expect.arrayContaining(
+              foreignRows.map(r => ({
+                _id: r.row._id,
+                primaryDisplay: r.row.title,
+              }))
+            ),
           })
-
-          expect(res.body[oneToManyRelationshipInfo.fieldName]).toBeUndefined()
         })
       })
 
@@ -655,9 +655,13 @@ describe("row api - postgres", () => {
             tableId: row.tableId,
             _id: expect.any(String),
             _rev: expect.any(String),
+            [manyToManyRelationshipInfo.fieldName]: expect.arrayContaining(
+              foreignRows.map(r => ({
+                _id: r.row._id,
+                primaryDisplay: r.row.title,
+              }))
+            ),
           })
-
-          expect(res.body[oneToManyRelationshipInfo.fieldName]).toBeUndefined()
         })
       })
     })
@@ -711,12 +715,6 @@ describe("row api - postgres", () => {
       describe("given than multiple tables have multiple rows", () => {
         const rowsCount = 6
         beforeEach(async () => {
-          const createRandomTableWithRows = async () =>
-            await config.createRow({
-              tableId: (await createDefaultPgTable())._id,
-              title: generator.name(),
-            })
-
           await createRandomTableWithRows()
           await createRandomTableWithRows()
 
@@ -916,7 +914,7 @@ describe("row api - postgres", () => {
             (row: Row) => row.id === 2
           )
           expect(m2mRow1).toEqual({
-            ...foreignRowsByType[RelationshipTypes.MANY_TO_MANY][0].row,
+            ...foreignRowsByType[RelationshipType.MANY_TO_MANY][0].row,
             [m2mFieldName]: [
               {
                 _id: row._id,
@@ -925,7 +923,7 @@ describe("row api - postgres", () => {
             ],
           })
           expect(m2mRow2).toEqual({
-            ...foreignRowsByType[RelationshipTypes.MANY_TO_MANY][1].row,
+            ...foreignRowsByType[RelationshipType.MANY_TO_MANY][1].row,
             [m2mFieldName]: [
               {
                 _id: row._id,
@@ -935,24 +933,24 @@ describe("row api - postgres", () => {
           })
           expect(res.body[m2oFieldName]).toEqual([
             {
-              ...foreignRowsByType[RelationshipTypes.MANY_TO_ONE][0].row,
+              ...foreignRowsByType[RelationshipType.MANY_TO_ONE][0].row,
               [`fk_${manyToOneRelationshipInfo.table.name}_${manyToOneRelationshipInfo.fieldName}`]:
                 row.id,
             },
             {
-              ...foreignRowsByType[RelationshipTypes.MANY_TO_ONE][1].row,
+              ...foreignRowsByType[RelationshipType.MANY_TO_ONE][1].row,
               [`fk_${manyToOneRelationshipInfo.table.name}_${manyToOneRelationshipInfo.fieldName}`]:
                 row.id,
             },
             {
-              ...foreignRowsByType[RelationshipTypes.MANY_TO_ONE][2].row,
+              ...foreignRowsByType[RelationshipType.MANY_TO_ONE][2].row,
               [`fk_${manyToOneRelationshipInfo.table.name}_${manyToOneRelationshipInfo.fieldName}`]:
                 row.id,
             },
           ])
           expect(res.body[o2mFieldName]).toEqual([
             {
-              ...foreignRowsByType[RelationshipTypes.ONE_TO_MANY][0].row,
+              ...foreignRowsByType[RelationshipType.ONE_TO_MANY][0].row,
               _id: expect.any(String),
               _rev: expect.any(String),
             },
@@ -1004,12 +1002,6 @@ describe("row api - postgres", () => {
       const rowsCount = 6
 
       beforeEach(async () => {
-        const createRandomTableWithRows = async () =>
-          await config.createRow({
-            tableId: (await createDefaultPgTable())._id,
-            title: generator.name(),
-          })
-
         await createRandomTableWithRows()
         await populatePrimaryRows(rowsCount)
         await createRandomTableWithRows()
@@ -1022,6 +1014,45 @@ describe("row api - postgres", () => {
 
         expect(res.body).toHaveLength(rowsCount)
       })
+    })
+  })
+
+  describe("POST /api/datasources/verify", () => {
+    it("should be able to verify the connection", async () => {
+      const response = await config.api.datasource.verify({
+        datasource: await databaseTestProviders.postgres.getDsConfig(),
+      })
+      expect(response.status).toBe(200)
+      expect(response.body.connected).toBe(true)
+    })
+
+    it("should state an invalid datasource cannot connect", async () => {
+      const dbConfig = await databaseTestProviders.postgres.getDsConfig()
+      const response = await config.api.datasource.verify({
+        datasource: {
+          ...dbConfig,
+          config: {
+            ...dbConfig.config,
+            password: "wrongpassword",
+          },
+        },
+      })
+
+      expect(response.status).toBe(200)
+      expect(response.body.connected).toBe(false)
+      expect(response.body.error).toBeDefined()
+    })
+  })
+
+  describe("POST /api/datasources/info", () => {
+    it("should fetch information about postgres datasource", async () => {
+      const primaryName = primaryPostgresTable.name
+      const response = await makeRequest("post", "/api/datasources/info", {
+        datasource: postgresDatasource,
+      })
+      expect(response.status).toBe(200)
+      expect(response.body.tableNames).toBeDefined()
+      expect(response.body.tableNames.indexOf(primaryName)).not.toBe(-1)
     })
   })
 })

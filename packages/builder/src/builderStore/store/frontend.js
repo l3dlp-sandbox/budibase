@@ -37,8 +37,11 @@ import {
 } from "builderStore/dataBinding"
 import { makePropSafe as safe } from "@budibase/string-templates"
 import { getComponentFieldOptions } from "helpers/formFields"
+import { createBuilderWebsocket } from "builderStore/websocket"
+import { BuilderSocketEvent } from "@budibase/shared-core"
 
 const INITIAL_FRONTEND_STATE = {
+  initialised: false,
   apps: [],
   name: "",
   url: "",
@@ -59,6 +62,10 @@ const INITIAL_FRONTEND_STATE = {
     showNotificationAction: false,
     sidePanel: false,
   },
+  features: {
+    componentValidation: false,
+    disableUserMetadata: false,
+  },
   errors: [],
   hasAppPackage: false,
   libraries: null,
@@ -69,7 +76,10 @@ const INITIAL_FRONTEND_STATE = {
   customTheme: {},
   previewDevice: "desktop",
   highlightedSettingKey: null,
+  propertyFocus: null,
   builderSidePanel: false,
+  hasLock: true,
+  showPreview: false,
 
   // URL params
   selectedScreenId: null,
@@ -86,6 +96,7 @@ const INITIAL_FRONTEND_STATE = {
 
 export const getFrontendStore = () => {
   const store = writable({ ...INITIAL_FRONTEND_STATE })
+  let websocket
 
   // This is a fake implementation of a "patch" API endpoint to try and prevent
   // 409s. All screen doc mutations (aside from creation) use this function,
@@ -101,6 +112,7 @@ export const getFrontendStore = () => {
     }
     let clone = cloneDeep(screen)
     const result = patchFn(clone)
+
     if (result === false) {
       return
     }
@@ -110,10 +122,14 @@ export const getFrontendStore = () => {
   store.actions = {
     reset: () => {
       store.set({ ...INITIAL_FRONTEND_STATE })
+      websocket?.disconnect()
+      websocket = null
     },
     initialise: async pkg => {
-      const { layouts, screens, application, clientLibPath } = pkg
-
+      const { layouts, screens, application, clientLibPath, hasLock } = pkg
+      if (!websocket) {
+        websocket = createBuilderWebsocket(application.appId)
+      }
       await store.actions.components.refreshDefinitions(application.appId)
 
       // Reset store state
@@ -137,6 +153,13 @@ export const getFrontendStore = () => {
         upgradableVersion: application.upgradableVersion,
         navigation: application.navigation || {},
         usedPlugins: application.usedPlugins || [],
+        hasLock,
+        features: {
+          ...INITIAL_FRONTEND_STATE.features,
+          ...application.features,
+        },
+        icon: application.icon || {},
+        initialised: true,
       }))
       screenHistoryStore.reset()
       automationHistoryStore.reset()
@@ -204,7 +227,6 @@ export const getFrontendStore = () => {
         // Select new screen
         store.update(state => {
           state.selectedScreenId = screen._id
-          state.selectedComponentId = screen.props?._id
           return state
         })
       },
@@ -216,6 +238,7 @@ export const getFrontendStore = () => {
           legalDirectChildren = []
         ) => {
           const type = component._component
+
           if (illegalChildren.includes(type)) {
             return type
           }
@@ -229,10 +252,13 @@ export const getFrontendStore = () => {
             return
           }
 
+          if (type === "@budibase/standard-components/sidepanel") {
+            illegalChildren = []
+          }
+
           const definition = store.actions.components.getDefinition(
             component._component
           )
-
           // Reset whitelist for direct children
           legalDirectChildren = []
           if (definition?.legalDirectChildren?.length) {
@@ -271,9 +297,12 @@ export const getFrontendStore = () => {
         }
       },
       save: async screen => {
-        // Validate screen structure
-        // Temporarily disabled to accommodate migration issues
-        // store.actions.screens.validate(screen)
+        const state = get(store)
+
+        // Validate screen structure if the app supports it
+        if (state.features?.componentValidation) {
+          store.actions.screens.validate(screen)
+        }
 
         // Check screen definition for any component settings which need updated
         store.actions.screens.enrichEmptySettings(screen)
@@ -284,7 +313,6 @@ export const getFrontendStore = () => {
         const routesResponse = await API.fetchAppRoutes()
 
         // If plugins changed we need to fetch the latest app metadata
-        const state = get(store)
         let usedPlugins = state.usedPlugins
         if (savedScreen.pluginAdded) {
           const { application } = await API.fetchAppPackage(state.appId)
@@ -326,6 +354,33 @@ export const getFrontendStore = () => {
           return
         }
         return await sequentialScreenPatch(patchFn, screenId)
+      },
+      replace: async (screenId, screen) => {
+        if (!screenId) {
+          return
+        }
+        if (!screen) {
+          // Screen deletion
+          store.update(state => ({
+            ...state,
+            screens: state.screens.filter(x => x._id !== screenId),
+          }))
+        } else {
+          const index = get(store).screens.findIndex(x => x._id === screen._id)
+          if (index === -1) {
+            // Screen addition
+            store.update(state => ({
+              ...state,
+              screens: [...state.screens, screen],
+            }))
+          } else {
+            // Screen update
+            store.update(state => {
+              state.screens[index] = screen
+              return state
+            })
+          }
+        }
       },
       delete: async screens => {
         const screensToDelete = Array.isArray(screens) ? screens : [screens]
@@ -573,6 +628,7 @@ export const getFrontendStore = () => {
               component[setting.key] = {
                 label: defaultDS.name,
                 tableId: defaultDS._id,
+                resourceId: defaultDS._id,
                 type: "table",
               }
             } else if (setting.type === "dataProvider") {
@@ -715,9 +771,13 @@ export const getFrontendStore = () => {
         else {
           await store.actions.screens.patch(screen => {
             // Find the selected component
+            let selectedComponentId = state.selectedComponentId
+            if (selectedComponentId.startsWith(`${screen._id}-`)) {
+              selectedComponentId = screen?.props._id
+            }
             const currentComponent = findComponent(
               screen.props,
-              state.selectedComponentId
+              selectedComponentId
             )
             if (!currentComponent) {
               return false
@@ -780,6 +840,7 @@ export const getFrontendStore = () => {
           return
         }
         const patchScreen = screen => {
+          // findComponent looks in the tree not comp.settings[0]
           let component = findComponent(screen.props, componentId)
           if (!component) {
             return false
@@ -940,11 +1001,19 @@ export const getFrontendStore = () => {
         const componentId = state.selectedComponentId
         const screen = get(selectedScreen)
         const parent = findComponentParent(screen.props, componentId)
-
-        // Check we aren't right at the top of the tree
         const index = parent?._children.findIndex(x => x._id === componentId)
-        if (!parent || componentId === screen.props._id) {
+
+        // Check for screen and navigation component edge cases
+        const screenComponentId = `${screen._id}-screen`
+        const navComponentId = `${screen._id}-navigation`
+        if (componentId === screenComponentId) {
           return null
+        }
+        if (componentId === navComponentId) {
+          return screenComponentId
+        }
+        if (parent._id === screen.props._id && index === 0) {
+          return navComponentId
         }
 
         // If we have siblings above us, choose the sibling or a descendant
@@ -967,11 +1036,19 @@ export const getFrontendStore = () => {
         return parent._id
       },
       getNext: () => {
+        const state = get(store)
         const component = get(selectedComponent)
         const componentId = component?._id
         const screen = get(selectedScreen)
         const parent = findComponentParent(screen.props, componentId)
         const index = parent?._children.findIndex(x => x._id === componentId)
+
+        // Check for screen and navigation component edge cases
+        const screenComponentId = `${screen._id}-screen`
+        const navComponentId = `${screen._id}-navigation`
+        if (state.selectedComponentId === screenComponentId) {
+          return navComponentId
+        }
 
         // If we have children, select first child
         if (component._children?.length) {
@@ -1153,7 +1230,12 @@ export const getFrontendStore = () => {
         })
       },
       updateSetting: async (name, value) => {
-        await store.actions.components.patch(component => {
+        await store.actions.components.patch(
+          store.actions.components.updateComponentSetting(name, value)
+        )
+      },
+      updateComponentSetting: (name, value) => {
+        return component => {
           if (!name || !component) {
             return false
           }
@@ -1164,6 +1246,13 @@ export const getFrontendStore = () => {
 
           const settings = getComponentSettings(component._component)
           const updatedSetting = settings.find(setting => setting.key === name)
+
+          const resetFields = settings.filter(
+            setting => name === setting.resetOn
+          )
+          resetFields?.forEach(setting => {
+            component[setting.key] = null
+          })
 
           if (
             updatedSetting?.type === "dataSource" ||
@@ -1181,9 +1270,8 @@ export const getFrontendStore = () => {
               component[key] = columnNames
             })
           }
-
           component[name] = value
-        })
+        }
       },
       requestEjectBlock: componentId => {
         store.actions.preview.sendEvent("eject-block", componentId)
@@ -1199,6 +1287,11 @@ export const getFrontendStore = () => {
           if (!block || !parent?._children?.length) {
             return false
           }
+
+          // Log event
+          analytics.captureEvent(Events.BLOCK_EJECTED, {
+            block: block._component,
+          })
 
           // Attach block children back into ejected definition, using the
           // _containsSlot flag to know where to insert them
@@ -1279,7 +1372,7 @@ export const getFrontendStore = () => {
     links: {
       save: async (url, title) => {
         const navigation = get(store).navigation
-        let links = [...navigation?.links]
+        let links = [...(navigation?.links ?? [])]
 
         // Skip if we have an identical link
         if (links.find(link => link.url === url && link.text === title)) {
@@ -1319,6 +1412,12 @@ export const getFrontendStore = () => {
           highlightedSettingKey: key,
         }))
       },
+      propertyFocus: key => {
+        store.update(state => ({
+          ...state,
+          propertyFocus: key,
+        }))
+      },
     },
     dnd: {
       start: component => {
@@ -1331,6 +1430,21 @@ export const getFrontendStore = () => {
         store.actions.preview.sendEvent("dragging-new-component", {
           dragging: false,
         })
+      },
+    },
+    websocket: {
+      selectResource: id => {
+        websocket.emit(BuilderSocketEvent.SelectResource, {
+          resourceId: id,
+        })
+      },
+    },
+    metadata: {
+      replace: metadata => {
+        store.update(state => ({
+          ...state,
+          ...metadata,
+        }))
       },
     },
   }

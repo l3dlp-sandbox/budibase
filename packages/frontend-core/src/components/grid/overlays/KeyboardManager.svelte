@@ -4,7 +4,7 @@
   import { NewRowID } from "../lib/constants"
 
   const {
-    enrichedRows,
+    rows,
     focusedCellId,
     visibleColumns,
     focusedRow,
@@ -14,6 +14,8 @@
     dispatch,
     selectedRows,
     config,
+    menu,
+    gridFocused,
   } = getContext("grid")
 
   const ignoredOriginSelectors = [
@@ -23,6 +25,11 @@
 
   // Global key listener which intercepts all key events
   const handleKeyDown = e => {
+    // Ignore completely if the grid is not focused
+    if (!$gridFocused) {
+      return
+    }
+
     // Avoid processing events sourced from certain origins
     if (e.target?.closest) {
       for (let selector of ignoredOriginSelectors) {
@@ -38,12 +45,12 @@
         e.preventDefault()
         focusFirstCell()
       } else if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
-        if ($config.allowAddRows) {
+        if ($config.canAddRows) {
           e.preventDefault()
           dispatch("add-row-inline")
         }
       } else if (e.key === "Delete" || e.key === "Backspace") {
-        if (Object.keys($selectedRows).length && $config.allowDeleteRows) {
+        if (Object.keys($selectedRows).length && $config.canDeleteRows) {
           dispatch("request-bulk-delete")
         }
       }
@@ -61,6 +68,7 @@
       } else {
         $focusedCellId = null
       }
+      menu.actions.close()
       return
     } else if (e.key === "Tab") {
       e.preventDefault()
@@ -91,7 +99,7 @@
           }
           break
         case "Enter":
-          if ($config.allowAddRows) {
+          if ($config.canAddRows) {
             dispatch("add-row-inline")
           }
       }
@@ -111,7 +119,7 @@
           break
         case "Delete":
         case "Backspace":
-          if (Object.keys($selectedRows).length && $config.allowDeleteRows) {
+          if (Object.keys($selectedRows).length && $config.canDeleteRows) {
             dispatch("request-bulk-delete")
           } else {
             deleteSelectedCell()
@@ -122,7 +130,7 @@
           break
         case " ":
         case "Space":
-          if ($config.allowDeleteRows) {
+          if ($config.canDeleteRows) {
             toggleSelectRow()
           }
           break
@@ -134,7 +142,7 @@
 
   // Focuses the first cell in the grid
   const focusFirstCell = () => {
-    const firstRow = $enrichedRows[0]
+    const firstRow = $rows[0]
     if (!firstRow) {
       return
     }
@@ -175,7 +183,7 @@
     if (!$focusedRow) {
       return
     }
-    const newRow = $enrichedRows[$focusedRow.__idx + delta]
+    const newRow = $rows[$focusedRow.__idx + delta]
     if (newRow) {
       const split = $focusedCellId.split("-")
       $focusedCellId = `${newRow._id}-${split[1]}`
@@ -207,13 +215,15 @@
     if ($focusedCellAPI && !$focusedCellAPI.isReadonly()) {
       const type = $focusedCellAPI.getType()
       if (type === "number" && keyCodeIsNumber(keyCode)) {
-        $focusedCellAPI.setValue(parseInt(key))
+        // Update the value locally but don't save it yet
+        $focusedCellAPI.setValue(parseInt(key), { save: false })
         $focusedCellAPI.focus()
       } else if (
         ["string", "barcodeqr", "longform"].includes(type) &&
         (keyCodeIsLetter(keyCode) || keyCodeIsNumber(keyCode))
       ) {
-        $focusedCellAPI.setValue(key)
+        // Update the value locally but don't save it yet
+        $focusedCellAPI.setValue(key, { save: false })
         $focusedCellAPI.focus()
       }
     }
@@ -224,10 +234,7 @@
     if (!id || id === NewRowID) {
       return
     }
-    selectedRows.update(state => {
-      state[id] = !state[id]
-      return state
-    })
+    selectedRows.actions.toggleRow(id)
   }
 
   onMount(() => {

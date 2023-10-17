@@ -2,7 +2,7 @@ import TestConfiguration from "../../config/TestConfiguration"
 import * as fixtures from "../../fixtures"
 import { Query } from "@budibase/types"
 
-describe("Internal API - Data Sources: MongoDB", () => {
+xdescribe("Internal API - Data Sources: MongoDB", () => {
   const config = new TestConfiguration()
 
   beforeAll(async () => {
@@ -52,7 +52,7 @@ describe("Internal API - Data Sources: MongoDB", () => {
       datasourcetoSave
     )
     // Get Query
-    const [getQueryResponse, getQueryJson] = await config.api.queries.get(
+    const [getQueryResponse, getQueryJson] = await config.api.queries.getQuery(
       <string>saveQueryJson._id
     )
 

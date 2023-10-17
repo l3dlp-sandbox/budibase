@@ -1,15 +1,21 @@
 <script>
-  import { Heading, Body, Button, Icon, notifications } from "@budibase/bbui"
-  import AppLockModal from "../common/AppLockModal.svelte"
+  import { Heading, Body, Button, Icon } from "@budibase/bbui"
   import { processStringSync } from "@budibase/string-templates"
+  import { auth } from "stores/portal"
   import { goto } from "@roxi/routify"
+  import { UserAvatars } from "@budibase/frontend-core"
+  import { sdk } from "@budibase/shared-core"
 
   export let app
-
   export let lockedAction
 
+  $: editing = app.sessions?.length
+  $: isBuilder = sdk.users.isBuilder($auth.user, app?.devId)
+
   const handleDefaultClick = () => {
-    if (window.innerWidth < 640) {
+    if (!isBuilder) {
+      goToApp()
+    } else if (window.innerWidth < 640) {
       goToOverview()
     } else {
       goToBuilder()
@@ -17,17 +23,15 @@
   }
 
   const goToBuilder = () => {
-    if (app.lockedOther) {
-      notifications.error(
-        `App locked by ${app.lockedBy.email}. Please allow lock to expire or have them unlock this app.`
-      )
-      return
-    }
     $goto(`../../app/${app.devId}`)
   }
 
   const goToOverview = () => {
-    $goto(`../overview/${app.devId}`)
+    $goto(`../../app/${app.devId}/settings`)
+  }
+
+  const goToApp = () => {
+    window.open(`/app/${app.name}`, "_blank")
   }
 </script>
 
@@ -44,7 +48,10 @@
   </div>
 
   <div class="updated">
-    {#if app.updatedAt}
+    {#if editing && isBuilder}
+      Currently editing
+      <UserAvatars users={app.sessions} />
+    {:else if app.updatedAt}
       {processStringSync("Updated {{ duration time 'millisecond' }} ago", {
         time: new Date().getTime() - new Date(app.updatedAt).getTime(),
       })}
@@ -58,14 +65,21 @@
     <Body size="S">{app.deployed ? "Published" : "Unpublished"}</Body>
   </div>
 
-  <div class="app-row-actions">
-    <AppLockModal {app} buttonSize="M" />
-    <Button size="S" secondary on:click={lockedAction || goToOverview}
-      >Manage</Button
-    >
-    <Button size="S" primary on:click={lockedAction || goToBuilder}>Edit</Button
-    >
-  </div>
+  {#if isBuilder}
+    <div class="app-row-actions">
+      <Button size="S" secondary on:click={lockedAction || goToOverview}>
+        Manage
+      </Button>
+      <Button size="S" primary on:click={lockedAction || goToBuilder}>
+        Edit
+      </Button>
+    </div>
+  {:else}
+    <!-- this can happen if an app builder has app user access to an app -->
+    <div class="app-row-actions">
+      <Button size="S" secondary>View</Button>
+    </div>
+  {/if}
 </div>
 
 <style>
@@ -87,6 +101,9 @@
 
   .updated {
     color: var(--spectrum-global-color-gray-700);
+    display: flex;
+    align-items: center;
+    gap: 8px;
   }
 
   .title,

@@ -1,8 +1,7 @@
 import { get, writable, derived } from "svelte/store"
-import { datasources } from "./"
 import { cloneDeep } from "lodash/fp"
 import { API } from "api"
-import { SWITCHABLE_TYPES } from "constants/backend"
+import { SWITCHABLE_TYPES, FIELDS } from "constants/backend"
 
 export function createTablesStore() {
   const store = writable({
@@ -22,15 +21,20 @@ export function createTablesStore() {
     }))
   }
 
-  const fetchTable = async tableId => {
-    const table = await API.fetchTableDefinition(tableId)
-
+  const singleFetch = async tableId => {
+    const table = await API.getTable(tableId)
     store.update(state => {
-      const indexToUpdate = state.list.findIndex(t => t._id === table._id)
-      state.list[indexToUpdate] = table
-      return {
-        ...state,
+      const list = []
+      // update the list, keep order accurate
+      for (let tbl of state.list) {
+        if (table._id === tbl._id) {
+          list.push(table)
+        } else {
+          list.push(tbl)
+        }
       }
+      state.list = list
+      return state
     })
   }
 
@@ -74,20 +78,34 @@ export function createTablesStore() {
     }
 
     const savedTable = await API.saveTable(updatedTable)
-    await fetch()
-    if (table.type === "external") {
-      await datasources.fetch()
+    replaceTable(savedTable._id, savedTable)
+    select(savedTable._id)
+    // make sure tables up to date (related)
+    let tableIdsToFetch = []
+    for (let column of Object.values(updatedTable?.schema || {})) {
+      if (column.type === FIELDS.LINK.type) {
+        tableIdsToFetch.push(column.tableId)
+      }
     }
-    await select(savedTable._id)
+    tableIdsToFetch = [...new Set(tableIdsToFetch)]
+    // too many tables to fetch, just get all
+    if (tableIdsToFetch.length > 3) {
+      await fetch()
+    } else {
+      await Promise.all(tableIdsToFetch.map(id => singleFetch(id)))
+    }
     return savedTable
   }
 
   const deleteTable = async table => {
+    if (!table?._id) {
+      return
+    }
     await API.deleteTable({
-      tableId: table?._id,
-      tableRev: table?._rev,
+      tableId: table._id,
+      tableRev: table._rev || "rev",
     })
-    await fetch()
+    replaceTable(table._id, null)
   }
 
   const saveField = async ({
@@ -135,35 +153,64 @@ export function createTablesStore() {
     await save(draft)
   }
 
-  const updateTable = table => {
-    const index = get(store).list.findIndex(x => x._id === table._id)
-    if (index === -1) {
+  // Handles external updates of tables
+  const replaceTable = (tableId, table) => {
+    if (!tableId) {
       return
     }
 
-    // This function has to merge state as there discrepancies with the table
-    // API endpoints. The table list endpoint and get table endpoint use the
-    // "type" property to mean different things.
-    store.update(state => {
-      state.list[index] = {
-        ...table,
-        type: state.list[index].type,
-      }
-      return state
-    })
+    // Handle deletion
+    if (!table) {
+      store.update(state => ({
+        ...state,
+        list: state.list.filter(x => x._id !== tableId),
+      }))
+      return
+    }
+
+    // Add new table
+    const index = get(store).list.findIndex(x => x._id === table._id)
+    if (index === -1) {
+      store.update(state => ({
+        ...state,
+        list: [...state.list, table],
+      }))
+    }
+
+    // Update existing table
+    else if (table) {
+      // This function has to merge state as there discrepancies with the table
+      // API endpoints. The table list endpoint and get table endpoint use the
+      // "type" property to mean different things.
+      store.update(state => {
+        state.list[index] = {
+          ...table,
+          type: state.list[index].type,
+        }
+        return state
+      })
+    }
+  }
+
+  const removeDatasourceTables = datasourceId => {
+    store.update(state => ({
+      ...state,
+      list: state.list.filter(table => table.sourceId !== datasourceId),
+    }))
   }
 
   return {
+    ...store,
     subscribe: derivedStore.subscribe,
     fetch,
-    fetchTable,
     init: fetch,
     select,
     save,
     delete: deleteTable,
     saveField,
     deleteField,
-    updateTable,
+    replaceTable,
+    removeDatasourceTables,
   }
 }
 
